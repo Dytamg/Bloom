@@ -1,0 +1,52 @@
+# Gradle files
+.gradle/
+build/
+
+# Android-specific
+*.iml
+.idea/
+.idea/libraries
+.idea/modules.xml
+.idea/workspace.xml
+.idea/navEditor.xml
+.idea/assetWizardSettings.xml
+local.properties
+captures/
+.externalNativeBuild
+.cxx/
+*.apk
+*.aar
+*.keystore
+*.jks
+
+# iOS-specific
+iosApp/DerivedData/
+iosApp/build/
+iosApp/Pods/
+iosApp/*.xcodeproj/xcuserdata/
+iosApp/*.xcworkspace/xcuserdata/
+iosApp/*.xcworkspace/xcshareddata/SwiftPM/
+.DS_Store
+
+# Rust-specific
+rust_core/target/
+rust_core/Cargo.lock
+
+# Kotlin Multiplatform
+.kotlin/
+shared/build/
+shared/src/androidMain/jniLibs/
+
+# Logs and memory dumps
+*.log
+*.hprof
+.DS_Store
+
+# Secrets and local config
+.env
+local.properties
+secrets.xml
+google-services.json
+credentials.json
+*.keystore
+*.jks

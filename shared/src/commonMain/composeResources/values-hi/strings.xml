@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pair_with_partner_title">पार्टनर के साथ जोड़ें</string>
+    <string name="link_your_partner">अपने पार्टनर को लिंक करें</string>
+    <string name="sign_in_instruction">अपने एन्क्रिप्टेड बैकअप को अपलोड करने के लिए Google के साथ साइन इन करें, फिर अपने पार्टनर के साथ सुरक्षित रूप से साझा करने के लिए 5-मिनट का सिंक कोड जेनरेट करें।</string>
+    <string name="sign_in_button">साइन इन करें और कोड जेनरेट करें</string>
+    <string name="sync_code_label">5-मिनट का सिंक कोड</string>
+    <string name="copy_code">सिंक कोड कॉपी करें</string>
+    <string name="copied_toast">कॉपी किया गया!</string>
+    <string name="retry_sign_in">साइन इन और अपलोड फिर से आज़माएं</string>
+</resources>

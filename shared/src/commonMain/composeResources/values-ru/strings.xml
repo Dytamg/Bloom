@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pair_with_partner_title">Связать с партнером</string>
+    <string name="link_your_partner">Привяжите партнера</string>
+    <string name="sign_in_instruction">Войдите через Google, чтобы загрузить зашифрованную резервную копию, затем создайте 5-минутный код синхронизации для безопасного обмена с партнером.</string>
+    <string name="sign_in_button">Войти и создать код</string>
+    <string name="sync_code_label">5-минутный код синхронизации</string>
+    <string name="copy_code">Копировать код</string>
+    <string name="copied_toast">Скопировано!</string>
+    <string name="retry_sign_in">Повторить вход и загрузку</string>
+</resources>

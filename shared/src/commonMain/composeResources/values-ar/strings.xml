@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pair_with_partner_title">الاقتران مع الشريك</string>
+    <string name="link_your_partner">اربط شريكك</string>
+    <string name="sign_in_instruction">قم بتسجيل الدخول باستخدام Google لتحميل نسختك الاحتياطية المشفرة ، ثم قم بإنشاء رمز مزامنة مدته 5 دقيقة لمشاركته مع شريكك بأمان.</string>
+    <string name="sign_in_button">تسجيل الدخول وإنشاء الرمز</string>
+    <string name="sync_code_label">رمز مزامنة لمدة 5 دقيقة</string>
+    <string name="copy_code">نسخ رمز المزامنة</string>
+    <string name="copied_toast">تم النسخ!</string>
+    <string name="retry_sign_in">إعادة محاولة تسجيل الدخول والتحميل</string>
+</resources>

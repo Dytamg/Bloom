@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pair_with_partner_title">Pair with Partner</string>
+    <string name="link_your_partner">Link Your Partner</string>
+    <string name="sign_in_instruction">Sign in with Google to upload your encrypted backup, then generate a 5-minute Sync Code to share with your partner securely.</string>
+    <string name="sign_in_button">Sign In &amp; Generate Code</string>
+    <string name="sync_code_label">5-Minute Sync Code</string>
+    <string name="copy_code">Copy Sync Code</string>
+    <string name="copied_toast">Copied!</string>
+    <string name="retry_sign_in">Retry Sign In &amp; Upload</string>
+</resources>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pair_with_partner_title">Vincular con Pareja</string>
+    <string name="link_your_partner">Enlaza a tu Pareja</string>
+    <string name="sign_in_instruction">Inicia sesión con Google para subir tu copia de seguridad encriptada y luego genera un Código de Sincronización de 5 minutos para compartirlo de forma segura.</string>
+    <string name="sign_in_button">Iniciar Sesión y Generar Código</string>
+    <string name="sync_code_label">Código de 5 Minutos</string>
+    <string name="copy_code">Copiar Código</string>
+    <string name="copied_toast">¡Copiado!</string>
+    <string name="retry_sign_in">Reintentar Iniciar Sesión y Subir</string>
+</resources>

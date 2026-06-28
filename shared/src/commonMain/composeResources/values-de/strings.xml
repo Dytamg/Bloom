@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pair_with_partner_title">Mit Partner koppeln</string>
+    <string name="link_your_partner">Partner verknüpfen</string>
+    <string name="sign_in_instruction">Melden Sie sich bei Google an, um Ihr verschlüsseltes Backup hochzuladen, und generieren Sie dann einen 5-minütigen Sync-Code, um ihn sicher mit Ihrem Partner zu teilen.</string>
+    <string name="sign_in_button">Anmelden &amp; Code generieren</string>
+    <string name="sync_code_label">5-Minuten Sync-Code</string>
+    <string name="copy_code">Code kopieren</string>
+    <string name="copied_toast">Kopiert!</string>
+    <string name="retry_sign_in">Anmeldung &amp; Upload wiederholen</string>
+</resources>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pair_with_partner_title">パートナーとペアリング</string>
+    <string name="link_your_partner">パートナーをリンク</string>
+    <string name="sign_in_instruction">Googleでログインして暗号化されたバックアップをアップロードし、パートナーと安全に共有するための5分間の同期コードを生成します。</string>
+    <string name="sign_in_button">ログインしてコードを生成</string>
+    <string name="sync_code_label">5分間の同期コード</string>
+    <string name="copy_code">同期コードをコピー</string>
+    <string name="copied_toast">コピーしました！</string>
+    <string name="retry_sign_in">ログインとアップロードを再試行</string>
+</resources>

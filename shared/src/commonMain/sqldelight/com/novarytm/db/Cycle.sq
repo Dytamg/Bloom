@@ -1,0 +1,89 @@
+CREATE TABLE CycleEntry (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL UNIQUE,
+    intensity INTEGER AS kotlin.Int, -- 1-5
+    notes TEXT,
+    sexualRelations TEXT,
+    painLevel INTEGER AS kotlin.Int, -- 1-10
+    symptoms TEXT
+);
+
+CREATE TABLE BirthControl (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT NOT NULL, -- "Pill", "IUD", etc.
+    reminderTime TEXT,
+    isActive INTEGER AS kotlin.Boolean DEFAULT 1
+);
+
+setBirthControl:
+INSERT OR REPLACE INTO BirthControl(id, type, isActive)
+VALUES (1, ?, 1);
+
+getBirthControl:
+SELECT * FROM BirthControl WHERE id = 1;
+
+insertEntry:
+INSERT OR REPLACE INTO CycleEntry(date, intensity, notes, sexualRelations, painLevel, symptoms)
+VALUES (?, ?, ?, ?, ?, ?);
+
+selectEntryByDate:
+SELECT * FROM CycleEntry WHERE date = ? LIMIT 1;
+
+selectAllEntries:
+SELECT * FROM CycleEntry ORDER BY date DESC;
+
+deleteEntry:
+DELETE FROM CycleEntry WHERE id = ?;
+
+deleteAllEntries:
+DELETE FROM CycleEntry;
+
+deleteBirthControl:
+DELETE FROM BirthControl;
+
+CREATE TABLE PregnancyTest (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT NOT NULL UNIQUE,
+    result TEXT NOT NULL -- "Positive", "Negative", "Invalid"
+);
+
+CREATE TABLE Reminder (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    type TEXT NOT NULL, -- "Pill", "IUD", "PregnancyTest"
+    frequency TEXT NOT NULL, -- "Daily", "Monthly", "OneTime", etc.
+    timeOfDay TEXT, -- "09:00"
+    nextDate TEXT, -- ISO Date for the next reminder (e.g. for IUD replacement)
+    isActive INTEGER AS kotlin.Boolean DEFAULT 1
+);
+
+insertPregnancyTest:
+INSERT OR REPLACE INTO PregnancyTest(date, result)
+VALUES (?, ?);
+
+selectAllPregnancyTests:
+SELECT * FROM PregnancyTest ORDER BY date DESC;
+
+deletePregnancyTest:
+DELETE FROM PregnancyTest WHERE id = ?;
+
+deleteAllPregnancyTests:
+DELETE FROM PregnancyTest;
+
+insertReminder:
+INSERT OR REPLACE INTO Reminder(type, frequency, timeOfDay, nextDate, isActive)
+VALUES (?, ?, ?, ?, ?);
+
+getRemindersByType:
+SELECT * FROM Reminder WHERE type = ?;
+
+selectAllReminders:
+SELECT * FROM Reminder;
+
+updateReminderState:
+UPDATE Reminder SET isActive = ? WHERE id = ?;
+
+deleteReminder:
+DELETE FROM Reminder WHERE id = ?;
+
+deleteAllReminders:
+DELETE FROM Reminder;

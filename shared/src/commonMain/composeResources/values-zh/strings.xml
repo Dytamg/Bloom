@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pair_with_partner_title">与伴侣配对</string>
+    <string name="link_your_partner">链接您的伴侣</string>
+    <string name="sign_in_instruction">使用Google登录以安全上传您的加密备份，然后生成一个5分钟的同步代码以与您的伴侣安全共享。</string>
+    <string name="sign_in_button">登录并生成代码</string>
+    <string name="sync_code_label">5分钟同步代码</string>
+    <string name="copy_code">复制同步代码</string>
+    <string name="copied_toast">已复制！</string>
+    <string name="retry_sign_in">重试登录并上传</string>
+</resources>

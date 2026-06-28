@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pair_with_partner_title">Associa con Partner</string>
+    <string name="link_your_partner">Collega il tuo Partner</string>
+    <string name="sign_in_instruction">Accedi a Google per caricare il tuo backup crittografato, quindi genera un codice di sincronizzazione di 5 minuti da condividere in modo sicuro con il tuo partner.</string>
+    <string name="sign_in_button">Accedi e Genera Codice</string>
+    <string name="sync_code_label">Codice di Sincronizzazione (5 min)</string>
+    <string name="copy_code">Copia Codice</string>
+    <string name="copied_toast">Copiato!</string>
+    <string name="retry_sign_in">Riprova Accesso e Caricamento</string>
+</resources>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pair_with_partner_title">Associer avec un partenaire</string>
+    <string name="link_your_partner">Liez votre partenaire</string>
+    <string name="sign_in_instruction">Connectez-vous avec Google pour télécharger votre sauvegarde chiffrée, puis générez un code de synchronisation de 5 minutes à partager avec votre partenaire en toute sécurité.</string>
+    <string name="sign_in_button">Se connecter et générer le code</string>
+    <string name="sync_code_label">Code de synchronisation (5 min)</string>
+    <string name="copy_code">Copier le code</string>
+    <string name="copied_toast">Copié !</string>
+    <string name="retry_sign_in">Réessayer la connexion et le téléchargement</string>
+</resources>
