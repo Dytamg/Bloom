@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -26,6 +27,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.jetbrains.compose.resources.painterResource
+import novarytm.shared.generated.resources.Res
+import novarytm.shared.generated.resources.app_logo
 
 @Composable
 fun LoginScreen(
@@ -55,9 +59,11 @@ fun LoginScreen(
     ) {
         Spacer(Modifier.height(48.dp))
 
-        Box(modifier = Modifier.size(80.dp).clip(CircleShape).background(primaryColor.copy(alpha = 0.1f)), contentAlignment = Alignment.Center) {
-            Icon(Icons.Default.Fingerprint, contentDescription = null, tint = primaryColor, modifier = Modifier.size(48.dp))
-        }
+        Image(
+            painter = painterResource(Res.drawable.app_logo),
+            contentDescription = "Bloom Logo",
+            modifier = Modifier.size(110.dp).clip(RoundedCornerShape(26.dp))
+        )
 
         Spacer(Modifier.height(24.dp))
 

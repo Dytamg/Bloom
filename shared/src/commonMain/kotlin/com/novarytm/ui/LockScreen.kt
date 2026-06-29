@@ -2,6 +2,7 @@
 
 package com.novarytm.ui
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -23,6 +24,9 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import org.jetbrains.compose.resources.painterResource
+import novarytm.shared.generated.resources.Res
+import novarytm.shared.generated.resources.app_logo
 import com.novarytm.auth.BiometricPromptEffect
 import com.novarytm.ffi.RustBridge
 import kotlinx.coroutines.Dispatchers
@@ -173,6 +177,13 @@ fun LockScreen(
             CircularProgressIndicator(color = primaryColor)
             Spacer(modifier = Modifier.height(24.dp))
         }
+
+        Image(
+            painter = painterResource(Res.drawable.app_logo),
+            contentDescription = "Bloom Logo",
+            modifier = Modifier.size(90.dp).clip(RoundedCornerShape(22.dp))
+        )
+        Spacer(modifier = Modifier.height(24.dp))
 
         IconButton(
             onClick = { 
