@@ -19,13 +19,20 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+import androidx.compose.material.icons.filled.ContentCopy
+import com.novarytm.storage.SecureStorageManager
+import kotlinx.coroutines.launch
+
 @Composable
 fun RecoveryKeyWarningScreen(
     userId: String,
+    storage: SecureStorageManager,
     onConfirmed: () -> Unit
 ) {
     var hasSaved by remember { mutableStateOf(false) }
+    var showCopied by remember { mutableStateOf(false) }
     val primaryColor = LocalAppColors.current.primary
+    val scope = rememberCoroutineScope()
 
     Column(
         modifier = Modifier
@@ -62,7 +69,7 @@ fun RecoveryKeyWarningScreen(
 
         Spacer(Modifier.height(32.dp))
 
-        // Prominent ID Display
+        // Prominent ID Display with Copy Button
         Card(
             colors = CardDefaults.cardColors(containerColor = Color.White),
             shape = RoundedCornerShape(16.dp),
@@ -83,6 +90,28 @@ fun RecoveryKeyWarningScreen(
                     ),
                     color = Color(0xFF3E3636)
                 )
+                Spacer(Modifier.height(16.dp))
+                Button(
+                    onClick = {
+                        storage.copyToClipboardSecurely(userId)
+                        showCopied = true
+                        scope.launch {
+                            kotlinx.coroutines.delay(3000)
+                            showCopied = false
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = primaryColor.copy(alpha = 0.15f)),
+                    shape = RoundedCornerShape(12.dp),
+                    elevation = ButtonDefaults.buttonElevation(0.dp)
+                ) {
+                    Icon(Icons.Default.ContentCopy, contentDescription = null, tint = primaryColor, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = if (showCopied) "Copied to Clipboard!" else "Copy ID",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = primaryColor
+                    )
+                }
             }
         }
 

@@ -94,6 +94,8 @@ class CycleTracker(
                 val validPainLevel = (painLevel ?: existing?.painLevel)?.coerceIn(1, 10)
                 val cleanSymptoms = sanitizeSymptoms(symptoms ?: existing?.symptoms)
                 cycleQueries.insertEntry(dateStr, validIntensity, sanitizeNote(notes), sexualRelations ?: existing?.sexualRelations, validPainLevel, cleanSymptoms)
+                val count = cycleQueries.selectAllEntries().executeAsList().size
+                android.util.Log.w("BLOOM_DIAG", "CycleTracker.logNewPeriod: inserted date=$dateStr, intensity=$validIntensity, totalEntries=$count")
                 refreshCycleStateInternal()
             }
         }
@@ -132,20 +134,22 @@ class CycleTracker(
                 val validPain = painLevel?.coerceIn(1, 10)
                 var currentDate = startDate
                 var isFirstDay = true
-                while (currentDate <= endDate) {
-                    val dayNotes = if (isFirstDay) sanitized else null
-                    val dateStr = currentDate.toString()
-                    val existing = cycleQueries.selectEntryByDate(dateStr).executeAsOneOrNull()
-                    
-                    val finalNotes = dayNotes ?: existing?.notes
-                    val finalRelations = existing?.sexualRelations ?: sexualRelations?.take(50)
-                    val finalPainLevel = validPain ?: existing?.painLevel
-                    val finalSymptoms = cleanSymptoms ?: existing?.symptoms
-                    
-                    cycleQueries.insertEntry(dateStr, validIntensity, finalNotes, finalRelations, finalPainLevel, finalSymptoms)
-                    
-                    currentDate = currentDate.plus(1, kotlinx.datetime.DateTimeUnit.DAY)
-                    isFirstDay = false
+                cycleQueries.transaction {
+                    while (currentDate <= endDate) {
+                        val dayNotes = if (isFirstDay) sanitized else null
+                        val dateStr = currentDate.toString()
+                        val existing = cycleQueries.selectEntryByDate(dateStr).executeAsOneOrNull()
+                        
+                        val finalNotes = dayNotes ?: existing?.notes
+                        val finalRelations = existing?.sexualRelations ?: sexualRelations?.take(50)
+                        val finalPainLevel = validPain ?: existing?.painLevel
+                        val finalSymptoms = cleanSymptoms ?: existing?.symptoms
+                        
+                        cycleQueries.insertEntry(dateStr, validIntensity, finalNotes, finalRelations, finalPainLevel, finalSymptoms)
+                        
+                        currentDate = currentDate.plus(1, kotlinx.datetime.DateTimeUnit.DAY)
+                        isFirstDay = false
+                    }
                 }
                 refreshCycleStateInternal()
             }

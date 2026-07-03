@@ -25,8 +25,8 @@ class GoogleDriveManager(
 ) {
     private val driveBaseUrl = "https://www.googleapis.com/drive/v3/files"
     private val driveUploadUrl = "https://www.googleapis.com/upload/drive/v3/files"
-    // L-4: Restricted appDataFolder scope
-    private val scopes = listOf("https://www.googleapis.com/auth/drive.appdata")
+    // Use restricted drive.file scope so files created by Bloom can be securely shared with partner
+    private val scopes = listOf("https://www.googleapis.com/auth/drive.file")
 
     private suspend fun getAuthToken(): String? = authManager.getAccessToken(scopes)
 
@@ -41,9 +41,9 @@ class GoogleDriveManager(
         val fileIdToReturn: String
 
         if (existingFileId == null) {
-            // Create
+            // Create in regular app-accessible Drive space so DrivePermission sharing works
             @Serializable
-            data class DriveFileMetadata(val name: String, val parents: List<String> = listOf("appDataFolder"))
+            data class DriveFileMetadata(val name: String)
 
             val createResponse = httpClient.post(driveBaseUrl) {
                 header(HttpHeaders.Authorization, "Bearer $token")
@@ -147,9 +147,26 @@ class GoogleDriveManager(
         }
         retryWithBackoff {
             try {
+                val token = getAuthToken()
+                // First try downloading via official Drive API endpoint if signed in
+                if (token != null) {
+                    val apiResponse = httpClient.get("$driveBaseUrl/$fileId?alt=media") {
+                        header(HttpHeaders.Authorization, "Bearer $token")
+                    }
+                    if (apiResponse.status.isSuccess()) {
+                        val bytes = apiResponse.body<ByteArray>()
+                        if (bytes.size <= 2 * 1024 * 1024) {
+                            val body = bytes.decodeToString()
+                            if (!body.trimStart().startsWith("<")) {
+                                return@retryWithBackoff body
+                            }
+                        }
+                    }
+                }
+
+                // Fallback to direct export URL
                 val url = "https://drive.google.com/uc?export=download&id=$fileId"
                 val response = httpClient.get(url) {
-                    val token = getAuthToken()
                     if (token != null) {
                         header(HttpHeaders.Authorization, "Bearer $token")
                     }
@@ -164,14 +181,10 @@ class GoogleDriveManager(
                     val body = bytes.decodeToString()
                     
                     if (body.trimStart().startsWith("<")) {
-                        return@retryWithBackoff "REVOKED"
+                        return@retryWithBackoff null
                     }
 
                     return@retryWithBackoff body
-                }
-                
-                if (response.status.value == 404 || response.status.value == 403) {
-                    return@retryWithBackoff "REVOKED"
                 }
                 
                 null
@@ -185,7 +198,6 @@ class GoogleDriveManager(
         try {
             val cleanName = name.filter { it.isLetterOrDigit() || it == '.' || it == '_' || it == '-' }
             val response = httpClient.get(driveBaseUrl) {
-                parameter("spaces", "appDataFolder") // L-4: Search appDataFolder space
                 parameter("q", "name = '$cleanName' and trashed = false")
                 header(HttpHeaders.Authorization, "Bearer $token")
             }

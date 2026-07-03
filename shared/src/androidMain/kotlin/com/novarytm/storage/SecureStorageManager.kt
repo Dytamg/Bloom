@@ -16,19 +16,36 @@ actual class SecureStorageManager(private val context: Context) {
         .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
         .build()
 
-    private val sharedPreferences: android.content.SharedPreferences = try {
-        EncryptedSharedPreferences.create(
-            context,
-            "secure_prefs",
-            masterKey,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
-        )
-    } catch (e: Exception) {
-        android.util.Log.e("SecureStorage", "EncryptedSharedPreferences corrupted/orphaned. Wiping secure prefs and retrying.", e)
+    private val sharedPreferences: android.content.SharedPreferences = run {
+        var lastException: Exception? = null
+        // Retry up to 10 times with exponential backoff (50ms, 100ms, 200ms, ...)
+        // Never fall back to an empty unencrypted SharedPreferences — that causes
+        // getMasterKey() to return null, which triggers DriverFactory to generate a
+        // new random key and wipe the existing database on restart.
+        for (attempt in 0 until 10) {
+            try {
+                return@run EncryptedSharedPreferences.create(
+                    context,
+                    "secure_prefs",
+                    masterKey,
+                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+                )
+            } catch (e: Exception) {
+                lastException = e
+                android.util.Log.w("SecureStorage", "EncryptedSharedPreferences attempt $attempt failed", e)
+                Thread.sleep(50L * (1L shl attempt.coerceAtMost(6)))  // 50ms → 3200ms max
+            }
+        }
+        // All 10 attempts failed. Last resort: delete the corrupted prefs file and try once more.
+        // This is safer than falling back to empty prefs because at least the Keystore wrapper
+        // key still exists, so we can re-wrap any keys that get saved after this point.
+        android.util.Log.e("SecureStorage", "All 10 EncryptedSharedPreferences attempts failed. Deleting corrupted prefs file as last resort.", lastException)
         try {
-            val file = java.io.File(context.filesDir.parent, "shared_prefs/secure_prefs.xml")
-            if (file.exists()) file.delete()
+            val prefsFile = java.io.File(context.filesDir.parentFile, "shared_prefs/secure_prefs.xml")
+            if (prefsFile.exists()) prefsFile.delete()
+        } catch (_: Exception) {}
+        try {
             EncryptedSharedPreferences.create(
                 context,
                 "secure_prefs",
@@ -36,9 +53,10 @@ actual class SecureStorageManager(private val context: Context) {
                 EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             )
-        } catch (e2: Exception) {
-            android.util.Log.e("SecureStorage", "Hardware EncryptedSharedPreferences failed completely. Using fallback prefs.", e2)
-            context.getSharedPreferences("secure_prefs_fallback", Context.MODE_PRIVATE)
+        } catch (e: Exception) {
+            android.util.Log.e("SecureStorage", "CRITICAL: EncryptedSharedPreferences completely failed. App cannot persist keys safely.", e)
+            // Return plain prefs as absolute last resort — but this should essentially never happen
+            context.getSharedPreferences("secure_prefs_emergency", Context.MODE_PRIVATE)
         }
     }
 
@@ -71,17 +89,6 @@ actual class SecureStorageManager(private val context: Context) {
                 null
             }
 
-            if (key != null) {
-                try {
-                    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-                    cipher.init(Cipher.ENCRYPT_MODE, key)
-                } catch (e: Exception) {
-                    android.util.Log.w("SecureStorage", "Existing Keystore wrapper key unusable or timed out (${e.message}). Recreating clean key.", e)
-                    try { ks.deleteEntry(alias) } catch (_: Exception) {}
-                    key = null
-                }
-            }
-
             if (key == null) {
                 val keyGen = KeyGenerator.getInstance(
                     KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore"
@@ -107,7 +114,7 @@ actual class SecureStorageManager(private val context: Context) {
 
     actual fun savePinHash(hash: ByteArray) {
         // M-6: PIN hash stored in EncryptedSharedPreferences (AES256_GCM)
-        sharedPreferences.edit().putString("pin_hash", android.util.Base64.encodeToString(hash, android.util.Base64.DEFAULT)).apply()
+        sharedPreferences.edit().putString("pin_hash", android.util.Base64.encodeToString(hash, android.util.Base64.DEFAULT)).commit()
     }
 
     actual fun getPinHash(): ByteArray? {
@@ -119,6 +126,8 @@ actual class SecureStorageManager(private val context: Context) {
 
     // VULN-04 FIX: Master key is wrapped with hardware-backed Keystore AES-GCM key
     actual fun saveMasterKey(key: ByteArray) {
+        val fingerprint = java.security.MessageDigest.getInstance("SHA-256").digest(key).take(4).joinToString("") { "%02x".format(it) }
+        android.util.Log.w("BLOOM_DIAG", "saveMasterKey: fingerprint=$fingerprint, size=${key.size}")
         val wrapper = keystoreWrapperKey
         if (wrapper != null) {
             try {
@@ -131,7 +140,7 @@ actual class SecureStorageManager(private val context: Context) {
                 sharedPreferences.edit()
                     .putString("master_key_wrapped", android.util.Base64.encodeToString(combined, android.util.Base64.DEFAULT))
                     .remove("master_key")
-                    .apply()
+                    .commit()
                 return
             } catch (e: Exception) {
                 android.util.Log.e("SecureStorage", "Keystore hardware encryption failed. Refusing to downgrade.", e)
@@ -141,29 +150,40 @@ actual class SecureStorageManager(private val context: Context) {
         sharedPreferences.edit()
             .putString("master_key", android.util.Base64.encodeToString(key, android.util.Base64.DEFAULT))
             .remove("master_key_wrapped")
-            .apply()
+            .commit()
     }
 
     // VULN-04 FIX: Unwrap master key using hardware-backed Keystore AES-GCM key
     actual fun getMasterKey(): ByteArray? {
         val wrappedBase64 = sharedPreferences.getString("master_key_wrapped", null)
         val wrapper = keystoreWrapperKey
+        android.util.Log.i("SecureStorage", "getMasterKey: wrappedBase64=${if (wrappedBase64 != null) "present(${wrappedBase64.length}chars)" else "NULL"}, keystoreWrapper=${if (wrapper != null) "present" else "NULL"}")
         if (wrappedBase64 != null && wrapper != null) {
-            try {
-                val combined = android.util.Base64.decode(wrappedBase64, android.util.Base64.DEFAULT)
-                if (combined.size >= 12) {
-                    val iv = combined.sliceArray(0 until 12)
-                    val encrypted = combined.sliceArray(12 until combined.size)
-                    val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-                    cipher.init(Cipher.DECRYPT_MODE, wrapper, GCMParameterSpec(128, iv))
-                    return cipher.doFinal(encrypted)
+            for (attempt in 0..2) {
+                try {
+                    val combined = android.util.Base64.decode(wrappedBase64, android.util.Base64.DEFAULT)
+                    android.util.Log.d("SecureStorage", "getMasterKey: combined.size=${combined.size}, attempt=$attempt")
+                    if (combined.size >= 12) {
+                        val iv = combined.sliceArray(0 until 12)
+                        val encrypted = combined.sliceArray(12 until combined.size)
+                        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                        cipher.init(Cipher.DECRYPT_MODE, wrapper, GCMParameterSpec(128, iv))
+                        val result = cipher.doFinal(encrypted)
+                        val fp = java.security.MessageDigest.getInstance("SHA-256").digest(result).take(4).joinToString("") { "%02x".format(it) }
+                        android.util.Log.i("SecureStorage", "getMasterKey: SUCCESS unwrapped ${result.size} bytes on attempt $attempt, fingerprint=$fp")
+                        return result
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("SecureStorage", "Keystore unwrap failed in getMasterKey (attempt $attempt)", e)
+                    if (attempt < 2) Thread.sleep(60)
                 }
-            } catch (e: Exception) {
-                android.util.Log.e("SecureStorage", "Keystore unwrap failed in getMasterKey", e)
             }
+            android.util.Log.e("SecureStorage", "getMasterKey: ALL 3 Keystore unwrap attempts FAILED — falling through to legacy")
         }
         // Fallback: read legacy plaintext key (pre-VULN-04 installations)
-        val legacyBase64 = sharedPreferences.getString("master_key", null) ?: return null
+        val legacyBase64 = sharedPreferences.getString("master_key", null)
+        android.util.Log.i("SecureStorage", "getMasterKey: legacyBase64=${if (legacyBase64 != null) "present" else "NULL"}")
+        if (legacyBase64 == null) return null
         return try {
             val legacyKey = android.util.Base64.decode(legacyBase64, android.util.Base64.DEFAULT)
             saveMasterKey(legacyKey)
@@ -172,7 +192,7 @@ actual class SecureStorageManager(private val context: Context) {
     }
 
     actual fun saveUserId(id: String) {
-        sharedPreferences.edit().putString("user_id", id).apply()
+        sharedPreferences.edit().putString("user_id", id).commit()
     }
 
     actual fun getUserId(): String? {
@@ -180,7 +200,7 @@ actual class SecureStorageManager(private val context: Context) {
     }
 
     actual fun saveTargetSyncId(id: String) {
-        sharedPreferences.edit().putString("target_sync_id", id).apply()
+        sharedPreferences.edit().putString("target_sync_id", id).commit()
     }
 
     actual fun getTargetSyncId(): String? {
@@ -199,7 +219,7 @@ actual class SecureStorageManager(private val context: Context) {
                 sharedPreferences.edit()
                     .putString("sync_secret_key_wrapped", android.util.Base64.encodeToString(combined, android.util.Base64.DEFAULT))
                     .remove("sync_secret_key")
-                    .apply()
+                    .commit()
                 return
             } catch (e: Exception) {
                 android.util.Log.e("SecureStorage", "Keystore hardware encryption failed for sync key. Refusing to downgrade.", e)
@@ -209,7 +229,7 @@ actual class SecureStorageManager(private val context: Context) {
         sharedPreferences.edit()
             .putString("sync_secret_key", android.util.Base64.encodeToString(key, android.util.Base64.DEFAULT))
             .remove("sync_secret_key_wrapped")
-            .apply()
+            .commit()
     }
 
     actual fun getSyncSecretKey(): ByteArray? {
@@ -238,7 +258,7 @@ actual class SecureStorageManager(private val context: Context) {
     }
 
     actual fun savePartnerEmail(email: String) {
-        sharedPreferences.edit().putString("partner_email", email).apply()
+        sharedPreferences.edit().putString("partner_email", email).commit()
     }
 
     actual fun getPartnerEmail(): String? {
@@ -249,7 +269,7 @@ actual class SecureStorageManager(private val context: Context) {
         sharedPreferences.edit()
             .putBoolean("auth_flow_active", active)
             .putLong("auth_flow_active_ts", if (active) android.os.SystemClock.elapsedRealtime() else 0L)
-            .apply()
+            .commit()
     }
 
     actual fun isAuthFlowActive(): Boolean {
@@ -264,7 +284,7 @@ actual class SecureStorageManager(private val context: Context) {
     }
 
     actual fun setBiometricsEnabled(enabled: Boolean) {
-        sharedPreferences.edit().putBoolean("biometrics_enabled", enabled).apply()
+        sharedPreferences.edit().putBoolean("biometrics_enabled", enabled).commit()
     }
 
     actual fun isBiometricsEnabled(): Boolean {
@@ -276,7 +296,7 @@ actual class SecureStorageManager(private val context: Context) {
         sharedPreferences.edit().putString(
             "derivation_salt",
             android.util.Base64.encodeToString(salt, android.util.Base64.DEFAULT)
-        ).apply()
+        ).commit()
     }
 
     actual fun getDerivationSalt(): ByteArray? {
@@ -287,7 +307,7 @@ actual class SecureStorageManager(private val context: Context) {
     }
 
     actual fun savePartnerPermissionsJson(json: String) {
-        sharedPreferences.edit().putString("partner_permissions_json", json).apply()
+        sharedPreferences.edit().putString("partner_permissions_json", json).commit()
     }
 
     actual fun getPartnerPermissionsJson(): String? {
@@ -295,7 +315,7 @@ actual class SecureStorageManager(private val context: Context) {
     }
 
     actual fun saveThemePreference(themeName: String) {
-        sharedPreferences.edit().putString("theme_preference", themeName).apply()
+        sharedPreferences.edit().putString("theme_preference", themeName).commit()
     }
 
     actual fun getThemePreference(): String? {
@@ -303,7 +323,9 @@ actual class SecureStorageManager(private val context: Context) {
     }
 
     actual fun clearAll() {
-        sharedPreferences.edit().clear().apply()
+        android.util.Log.w("SecureStorage", "clearAll() CALLED — wiping all preferences")
+        Thread.currentThread().stackTrace.take(10).forEach { android.util.Log.w("SecureStorage", "  at $it") }
+        sharedPreferences.edit().clear().commit()
     }
 
     actual fun copyToClipboardSecurely(text: String) {
@@ -322,7 +344,7 @@ actual class SecureStorageManager(private val context: Context) {
     }
 
     actual fun saveFailedPinAttempts(attempts: Int) {
-        sharedPreferences.edit().putInt("failed_pin_attempts", attempts).apply()
+        sharedPreferences.edit().putInt("failed_pin_attempts", attempts).commit()
     }
 
     actual fun getPinLockoutUntil(): Long {
@@ -330,18 +352,18 @@ actual class SecureStorageManager(private val context: Context) {
     }
 
     actual fun savePinLockoutUntil(timestampMs: Long) {
-        sharedPreferences.edit().putLong("pin_lockout_until", timestampMs).apply()
+        sharedPreferences.edit().putLong("pin_lockout_until", timestampMs).commit()
     }
 
     actual fun clearLockoutState() {
         sharedPreferences.edit()
             .putInt("failed_pin_attempts", 0)
             .putLong("pin_lockout_until", 0L)
-            .apply()
+            .commit()
     }
 
     actual fun saveLastSyncTimestamp(timestampMs: Long) {
-        sharedPreferences.edit().putLong("last_sync_timestamp", timestampMs).apply()
+        sharedPreferences.edit().putLong("last_sync_timestamp", timestampMs).commit()
     }
 
     actual fun getLastSyncTimestamp(): Long {

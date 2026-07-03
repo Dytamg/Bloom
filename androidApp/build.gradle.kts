@@ -1,6 +1,7 @@
 plugins {
     id("com.android.application")
     kotlin("plugin.compose")
+    id("org.jetbrains.compose")
 }
 
 android {
@@ -39,6 +40,19 @@ android {
             useLegacyPackaging = false
         }
     }
+    sourceSets {
+        getByName("main").assets.srcDirs("build/generated/composeAssets")
+    }
+}
+
+val copyComposeAssets = tasks.register<Copy>("copyComposeAssets") {
+    dependsOn(":shared:prepareComposeResourcesTaskForCommonMain")
+    from(project(":shared").layout.buildDirectory.dir("generated/compose/resourceGenerator/preparedResources/commonMain/composeResources"))
+    into(layout.buildDirectory.dir("generated/composeAssets/composeResources/novarytm.shared.generated.resources"))
+}
+
+tasks.matching { it.name.startsWith("generate") && it.name.endsWith("Assets") }.configureEach {
+    dependsOn(copyComposeAssets)
 }
 
 kotlin {

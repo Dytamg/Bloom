@@ -67,27 +67,21 @@ fun LockScreen(
         failedAttempts++
         storage.saveFailedPinAttempts(failedAttempts)
 
-        if (failedAttempts >= 20) {
-            onReset()
-            true
+        val shift = (failedAttempts - 5).coerceAtLeast(0)
+        val lockoutDurationMs: Long = if (failedAttempts >= 5) {
+            (30_000L * (1L shl shift.coerceAtMost(20))).coerceAtMost(86400_000L)
         } else {
-            val shift = (failedAttempts - 5).coerceAtLeast(0)
-            val lockoutDurationMs: Long = if (failedAttempts >= 5) {
-                (30_000L * (1L shl shift.coerceAtMost(20))).coerceAtMost(86400_000L)
-            } else {
-                0L
-            }
-
-            if (lockoutDurationMs > 0) {
-                lockoutUntilMs = Clock.System.now().toEpochMilliseconds() + lockoutDurationMs
-                storage.savePinLockoutUntil(lockoutUntilMs)
-                authError = "Locked out due to failed attempts"
-            } else {
-                val msgPrefix = prefix ?: "Incorrect PIN"
-                authError = "$msgPrefix (${20 - failedAttempts} attempts remaining before data wipe)"
-            }
-            false
+            0L
         }
+
+        if (lockoutDurationMs > 0) {
+            lockoutUntilMs = Clock.System.now().toEpochMilliseconds() + lockoutDurationMs
+            storage.savePinLockoutUntil(lockoutUntilMs)
+            authError = "Locked out due to failed attempts"
+        } else {
+            authError = prefix ?: "Incorrect PIN"
+        }
+        false
     }
 
     LaunchedEffect(lockoutUntilMs) {
@@ -148,7 +142,7 @@ fun LockScreen(
                     storage.savePinLockoutUntil(0L)
                     isUnlocked = true
                 } else {
-                    recordFailedAttempt("Biometric unlock failed")
+                    authError = "Biometric unlock failed. Please use PIN."
                 }
                 isLoading = false
             }
@@ -158,7 +152,7 @@ fun LockScreen(
                 if (errString.contains("cancel", ignoreCase = true) || errString.contains("user", ignoreCase = true)) {
                     authError = "Biometric unlock canceled"
                 } else {
-                    recordFailedAttempt("Biometric error: $errString")
+                    authError = "Biometric error. Please enter PIN."
                 }
             }
         }

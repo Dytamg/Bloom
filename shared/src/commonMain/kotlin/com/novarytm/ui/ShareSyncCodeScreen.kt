@@ -50,7 +50,7 @@ fun ShareSyncCodeScreen(
     var syncCode by remember { mutableStateOf<String?>(null) }
     var isGenerating by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
-    var partnerEmail by remember { mutableStateOf(storage.getPartnerEmail() ?: "") }
+    var partnerEmail by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
@@ -215,7 +215,8 @@ fun ShareSyncCodeScreen(
                                 if (success) {
                                     syncCode = null
                                     errorMessage = null
-                                    // Optionally show a toast or message
+                                    partnerEmail = ""
+                                    storage.savePartnerEmail("")
                                 } else {
                                     errorMessage = "Failed to revoke access. Please try again."
                                 }

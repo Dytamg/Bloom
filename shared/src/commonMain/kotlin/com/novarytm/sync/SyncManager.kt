@@ -143,20 +143,7 @@ class SyncManager(
                 // Owner fetching their own data
                 googleDriveManager.pullSyncBlob()
             }
-            
-            if (encryptedBase64 == "REVOKED") {
-                database.transaction {
-                    queries.deleteAllEntries()
-                    queries.deleteBirthControl()
-                    queries.deleteAllPregnancyTests()
-                    queries.deleteAllReminders()
-                }
-                storage.savePartnerPermissionsJson("{}")
-                storage.saveTargetSyncId("")
-                return@withContext true
-            }
-            
-            if (encryptedBase64.isNullOrEmpty()) {
+            if (encryptedBase64.isNullOrEmpty() || encryptedBase64 == "REVOKED") {
                 return@withContext true
             }
             importEncryptedSyncPayload(encryptedBase64)
@@ -191,6 +178,8 @@ class SyncManager(
             val dateRegex = Regex("^\\d{4}-\\d{2}-\\d{2}$")
             
             database.transaction {
+                android.util.Log.e("BLOOM_DIAG", "!!! deleteAllEntries CALLED FROM SYNC IMPORT !!!")
+                Thread.currentThread().stackTrace.take(10).forEach { android.util.Log.e("BLOOM_DIAG", "  at $it") }
                 queries.deleteAllEntries()
                 queries.deleteAllPregnancyTests()
                 queries.deleteAllReminders()

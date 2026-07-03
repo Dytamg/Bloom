@@ -17,6 +17,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.*
@@ -232,7 +233,7 @@ fun CalendarScreen(
     entries: List<CycleEntry>,
     isPartner: Boolean = false,
     partnerPerms: PartnerPermissions? = null,
-    onEditEntry: (CycleEntry) -> Unit,
+    onEditEntry: (CycleEntry, String?) -> Unit,
     onDeleteEntry: (Long) -> Unit
 ) {
     val coroutineScope = rememberCoroutineScope()
@@ -376,7 +377,7 @@ fun CalendarScreen(
                         entry = entry,
                         isPartner = isPartner,
                         partnerPerms = partnerPerms,
-                        onEdit = { onEditEntry(entry) },
+                        onEdit = { onEditEntry(entry, null) },
                         onDelete = { entry.id?.let { onDeleteEntry(it) } }
                     )
                 }
@@ -387,6 +388,36 @@ fun CalendarScreen(
                 }
                 
                 if (!isPartner) {
+                    item {
+                        val currentEntry = displayEntries.firstOrNull()
+                        val periodEntry = displayEntries.firstOrNull { (it.intensity ?: 0) > 0 } ?: currentEntry
+
+                        Button(
+                            onClick = {
+                                val entryToEdit = periodEntry ?: CycleEntry(
+                                    id = 0L,
+                                    date = selectedDate.toString(),
+                                    intensity = 3,
+                                    notes = "",
+                                    sexualRelations = null,
+                                    painLevel = 1,
+                                    symptoms = ""
+                                )
+                                onEditEntry(entryToEdit, selectedDate.toString())
+                            },
+                            modifier = Modifier.fillMaxWidth().height(50.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = LocalAppColors.current.primary)
+                        ) {
+                            Icon(Icons.Default.Edit, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = if (periodEntry != null) "Edit Period / Symptoms" else "Log Period / Symptoms",
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                        }
+                    }
+
                     item {
                         val currentEntry = displayEntries.firstOrNull()
                         val currentRel = currentEntry?.sexualRelations
@@ -419,6 +450,18 @@ fun CalendarScreen(
                         group = group,
                         isPartner = isPartner,
                         partnerPerms = partnerPerms,
+                        onEdit = {
+                            val firstEntry = entries.firstOrNull { it.id != null && it.id in group.ids } ?: CycleEntry(
+                                id = group.ids.firstOrNull() ?: 0L,
+                                date = group.startDate.toString(),
+                                intensity = group.maxIntensity,
+                                notes = group.notes,
+                                sexualRelations = null,
+                                painLevel = group.maxPainLevel,
+                                symptoms = group.symptoms.joinToString(", ")
+                            )
+                            onEditEntry(firstEntry, group.endDate.toString())
+                        },
                         onDelete = {
                             group.ids.forEach { id -> onDeleteEntry(id) }
                         }
@@ -495,13 +538,15 @@ fun groupPeriodEntries(entries: List<CycleEntry>): List<PeriodGroup> {
 }
 
 @Composable
-fun HistoryGroupItem(group: PeriodGroup, isPartner: Boolean = false, partnerPerms: PartnerPermissions? = null, onDelete: () -> Unit) {
+fun HistoryGroupItem(group: PeriodGroup, isPartner: Boolean = false, partnerPerms: PartnerPermissions? = null, onEdit: () -> Unit = {}, onDelete: () -> Unit) {
     val periodColor = LocalAppColors.current.primary
     val showIntensity = !isPartner || (partnerPerms?.shareFlowIntensity == true)
     val showNotes = !isPartner || (partnerPerms?.shareSymptomsMoods == true)
     
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().then(
+            if (!isPartner) Modifier.clickable { onEdit() } else Modifier
+        ),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
@@ -536,8 +581,13 @@ fun HistoryGroupItem(group: PeriodGroup, isPartner: Boolean = false, partnerPerm
             }
             
             if (!isPartner) {
-                IconButton(onClick = onDelete) {
-                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.LightGray)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onEdit) {
+                        Icon(Icons.Default.Edit, contentDescription = "Edit period log", tint = periodColor, modifier = Modifier.size(20.dp))
+                    }
+                    IconButton(onClick = onDelete) {
+                        Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.LightGray, modifier = Modifier.size(20.dp))
+                    }
                 }
             }
         }
@@ -551,11 +601,9 @@ fun HistoryItem(entry: CycleEntry, isPartner: Boolean = false, partnerPerms: Par
     val showNotes = !isPartner || (partnerPerms?.shareSymptomsMoods == true)
     val showSexual = !isPartner || (partnerPerms?.shareSexualActivity == true)
     
-    val isPeriodLog = (entry.intensity ?: 0) > 0
-    val hasSexualActivity = !entry.sexualRelations.isNullOrBlank()
     Card(
         modifier = Modifier.fillMaxWidth().then(
-            if (!isPartner && isPeriodLog && !hasSexualActivity) Modifier.clickable { onEdit() } else Modifier
+            if (!isPartner) Modifier.clickable { onEdit() } else Modifier
         ),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -592,13 +640,23 @@ fun HistoryItem(entry: CycleEntry, isPartner: Boolean = false, partnerPerms: Par
             }
 
             if (!isPartner) {
-                IconButton(onClick = onDelete) {
-                    Icon(
-                        Icons.Default.Delete, 
-                        contentDescription = "Delete entry", 
-                        tint = Color.Gray.copy(alpha = 0.5f),
-                        modifier = Modifier.size(20.dp)
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onEdit) {
+                        Icon(
+                            Icons.Default.Edit, 
+                            contentDescription = "Edit entry", 
+                            tint = periodColor,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                    IconButton(onClick = onDelete) {
+                        Icon(
+                            Icons.Default.Delete, 
+                            contentDescription = "Delete entry", 
+                            tint = Color.Gray.copy(alpha = 0.5f),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
             }
         }

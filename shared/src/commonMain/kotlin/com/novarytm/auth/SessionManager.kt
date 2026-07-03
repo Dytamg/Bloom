@@ -45,25 +45,18 @@ class SessionManager(
     }
 
     fun reset() {
+        println("SessionManager.reset() CALLED — stack trace:")
+        Thread.currentThread().stackTrace.take(10).forEach { println("  at $it") }
         storage.clearAll()
         _state.value = SessionState.Onboarding
     }
     
-    private fun rekeyDatabase(masterKey: ByteArray) {
-        try {
-            @OptIn(ExperimentalStdlibApi::class)
-            val hexKey = masterKey.toHexString()
-            driver.execute(null, "PRAGMA rekey = \"x'${hexKey}'\"", 0)
-        } catch (e: Exception) {
-            println("Failed to rekey database: ${e.message}")
-        }
-    }
-    
     fun completeOnboarding(userId: String, pinHash: ByteArray, masterKey: ByteArray, salt: ByteArray, isRestore: Boolean = false) {
-        rekeyDatabase(masterKey)
+        if (storage.getMasterKey() == null) {
+            storage.saveMasterKey(masterKey)
+        }
         storage.saveUserId(userId)
         storage.savePinHash(pinHash)
-        storage.saveMasterKey(masterKey)
         storage.saveDerivationSalt(salt)  // VULN-01 FIX: Persist Argon2id salt
         masterKey.fill(0)
         pinHash.fill(0)
@@ -72,10 +65,11 @@ class SessionManager(
     }
 
     fun completePartnerOnboarding(targetId: String, pinHash: ByteArray, masterKey: ByteArray, secretKey: ByteArray? = null, salt: ByteArray = ByteArray(0)) {
-        rekeyDatabase(masterKey)
+        if (storage.getMasterKey() == null) {
+            storage.saveMasterKey(masterKey)
+        }
         storage.saveTargetSyncId(targetId)
         storage.savePinHash(pinHash)
-        storage.saveMasterKey(masterKey)
         secretKey?.let { 
             storage.saveSyncSecretKey(it)
             it.fill(0)

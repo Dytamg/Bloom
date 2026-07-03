@@ -117,7 +117,24 @@ fun App(database: NovarytmDatabase, driver: SqlDriver, rustBridge: RustBridge, s
     }
     
     var onboardingStage by remember { mutableStateOf<OnboardingStage>(OnboardingStage.Welcome) }
-    var currentScreen by remember { mutableStateOf<Screen>(Screen.Home) }
+    val screenStack = remember { mutableStateListOf<Screen>(Screen.Home) }
+    val currentScreen = screenStack.lastOrNull() ?: Screen.Home
+    val onScreenChange: (Screen) -> Unit = { newScreen ->
+        if (newScreen == Screen.Home) {
+            screenStack.clear()
+            screenStack.add(Screen.Home)
+        } else {
+            screenStack.remove(newScreen)
+            screenStack.add(newScreen)
+        }
+    }
+    val popBackStack: () -> Unit = {
+        if (screenStack.size > 1) {
+            screenStack.removeAt(screenStack.lastIndex)
+        } else {
+            onScreenChange(Screen.Home)
+        }
+    }
     var showLogScreen by remember { mutableStateOf(false) }
 
     val cycleQueries = database.cycleQueries
@@ -125,6 +142,11 @@ fun App(database: NovarytmDatabase, driver: SqlDriver, rustBridge: RustBridge, s
         if (isInitializing) kotlinx.coroutines.flow.flowOf(emptyList())
         else cycleQueries.selectAllEntries().asFlow().mapToList(Dispatchers.IO)
     }.collectAsState(initial = emptyList())
+
+    // BLOOM_DIAG: Track entry count changes
+    LaunchedEffect(latestEntries.size) {
+        android.util.Log.w("BLOOM_DIAG", "latestEntries.size = ${latestEntries.size}, isInitializing = $isInitializing")
+    }
     
     val birthControl by remember(isInitializing) {
         if (isInitializing) kotlinx.coroutines.flow.flowOf(null)
@@ -177,7 +199,7 @@ fun App(database: NovarytmDatabase, driver: SqlDriver, rustBridge: RustBridge, s
         title = "Confirm Identity",
         subtitle = "Secure authentication required to access Partner settings.",
         onSuccess = {
-            currentScreen = Screen.PartnerPermissions
+            onScreenChange(Screen.PartnerPermissions)
         },
         onError = {
         }
@@ -244,7 +266,7 @@ fun App(database: NovarytmDatabase, driver: SqlDriver, rustBridge: RustBridge, s
                         onboardingStage = newStage
                     },
                     currentScreen = currentScreen,
-                    onScreenChange = { currentScreen = it },
+                    onScreenChange = onScreenChange,
                     showLogScreen = showLogScreen,
                     onShowLogScreenChange = { showLogScreen = it },
                     sessionManager = sessionManager,
@@ -266,7 +288,9 @@ fun App(database: NovarytmDatabase, driver: SqlDriver, rustBridge: RustBridge, s
                     onThemeChange = { newTheme ->
                         currentThemeName = newTheme
                         storage.saveThemePreference(newTheme)
-                    }
+                    },
+                    canGoBack = screenStack.size > 1,
+                    onBack = popBackStack
                 )
             }
         }
@@ -309,14 +333,19 @@ fun AppContent(
     googleAuthManager: GoogleAuthManager,
     onTriggerStepUpAuth: () -> Unit,
     currentThemeName: String,
-    onThemeChange: (String) -> Unit
+    onThemeChange: (String) -> Unit,
+    canGoBack: Boolean,
+    onBack: () -> Unit
 ) {
     val appColors = LocalAppColors.current
-
     var editingEntry by remember { mutableStateOf<CycleEntry?>(null) }
+    var editingEndDate by remember { mutableStateOf<String?>(null) }
     var showStepUpPinScreen by remember { mutableStateOf(false) }
     when (val state = sessionState) {
         is SessionState.Onboarding -> {
+            AppBackHandler(enabled = onboardingStage !is OnboardingStage.Welcome) {
+                onOnboardingStageChange(OnboardingStage.Welcome)
+            }
             when (val stage = onboardingStage) {
                 is OnboardingStage.Welcome -> LoginScreen(
                     onLogin = { id -> onOnboardingStageChange(OnboardingStage.RecoveryWarning(id)) },
@@ -325,6 +354,7 @@ fun AppContent(
                 )
                 is OnboardingStage.RecoveryWarning -> RecoveryKeyWarningScreen(
                     userId = stage.userId,
+                    storage = storage,
                     onConfirmed = { onOnboardingStageChange(OnboardingStage.CreatePin(stage.userId, isPartner = false)) }
                 )
                 is OnboardingStage.Restore -> InputIdentityScreen(
@@ -382,6 +412,7 @@ fun AppContent(
                 pinHash = storage.getPinHash(),
                 onUnlocked = { sessionManager.unlock() },
                 onReset = { 
+                    android.util.Log.e("BLOOM_DIAG", "!!! deleteAllEntries CALLED FROM APP RESET !!!")
                     cycleQueries.deleteAllEntries()
                     cycleQueries.deleteBirthControl()
                     sessionManager.reset() 
@@ -389,21 +420,37 @@ fun AppContent(
             )
         }
         is SessionState.Unlocked -> {
-            // Auto-Refresh on Unlock (for Partners or freshly restored accounts)
+            // Auto-Refresh on Unlock (for all accounts and partners)
             LaunchedEffect(Unit) {
-                if (state.isPartner || state.justRestored) {
-                    try {
+                try {
+                    android.util.Log.w("BLOOM_DIAG", "Unlock: isPartner=${state.isPartner}, justRestored=${state.justRestored}")
+                    cycleTracker.refreshCycleState()
+                    if (state.isPartner || state.justRestored) {
+                        android.util.Log.w("BLOOM_DIAG", "Unlock: TRIGGERING manualRefresh — WILL WIPE DB IF SYNC DOWNLOADS DATA")
                         withContext(Dispatchers.IO) {
                             syncManager?.manualRefresh()
                         }
                         cycleTracker.refreshCycleState()
-                    } catch (e: Exception) {
-                        println("SYNC_FATAL: Crash during post-login sync: ${e.message}")
-                        e.printStackTrace()
                     }
+                } catch (e: Exception) {
+                    println("SYNC_FATAL: Crash during post-login sync: ${e.message}")
+                    e.printStackTrace()
                 }
             }
             
+            val canAppGoBack = showStepUpPinScreen || showLogScreen || editingEntry != null || canGoBack
+            AppBackHandler(enabled = canAppGoBack) {
+                if (showStepUpPinScreen) {
+                    showStepUpPinScreen = false
+                } else if (showLogScreen || editingEntry != null) {
+                    onShowLogScreenChange(false)
+                    editingEntry = null
+                    editingEndDate = null
+                } else if (canGoBack) {
+                    onBack()
+                }
+            }
+
             if (showStepUpPinScreen) {
                 LockScreen(
                     rustBridge = rustBridge,
@@ -420,6 +467,7 @@ fun AppContent(
                     Box(modifier = Modifier.padding(padding)) {
                         LogEntryScreen(
                             initialEntry = editingEntry,
+                            initialEndDate = editingEndDate,
                             isReadOnly = state.isPartner,
                             onSave = { startDate, endDate, intensity, notes, sexualRelations, painLevel, symptoms ->
                                 cycleTracker.logNewPeriodRange(
@@ -429,10 +477,12 @@ fun AppContent(
                                 )
                                 onShowLogScreenChange(false)
                                 editingEntry = null
+                                editingEndDate = null
                             },
                             onCancel = { 
                                 onShowLogScreenChange(false)
                                 editingEntry = null
+                                editingEndDate = null
                             }
                         )
                     }
@@ -546,7 +596,10 @@ fun AppContent(
                                         entries = latestEntries,
                                         isPartner = state.isPartner,
                                         partnerPerms = perms,
-                                        onEditEntry = { editingEntry = it },
+                                        onEditEntry = { entry, end -> 
+                                            editingEntry = entry
+                                            editingEndDate = end
+                                        },
                                         onDeleteEntry = if (state.isPartner) {{ /* read-only */ }} else {{ cycleTracker.deleteEntry(it) }}
                                     )
                                 }
@@ -579,7 +632,7 @@ fun AppContent(
                                 onToggleBiometrics = { enabled ->
                                     storage.setBiometricsEnabled(enabled)
                                 },
-                                onBack = { onScreenChange(Screen.ShareSyncCode) },
+                                onBack = onBack,
                                 onSave = { perms ->
                                     storage.savePartnerPermissionsJson(com.novarytm.utils.AppJson.encodeToString(perms))
                                     syncManager?.scope?.launch {
@@ -588,7 +641,7 @@ fun AppContent(
                                 }
                             )
                             is Screen.PartnerSettings -> if (!state.isPartner) Box(Modifier.fillMaxSize()) else PartnerSettingsScreen(
-                                onBack = { onScreenChange(Screen.Home) },
+                                onBack = onBack,
                                 onDisconnect = {
                                     storage.saveTargetSyncId("")
                                     sessionManager.lock()
@@ -602,7 +655,7 @@ fun AppContent(
                                 googleAuthManager = googleAuthManager,
                                 birthControl = birthControl,
                                 entries = latestEntries,
-                                onBack = { onScreenChange(Screen.Home) },
+                                onBack = onBack,
                                 onOpenPermissions = { onScreenChange(Screen.PartnerPermissions) }
                             )
                         }

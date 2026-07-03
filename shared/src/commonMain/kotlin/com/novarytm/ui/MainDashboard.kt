@@ -107,6 +107,29 @@ fun MainDashboard(
                 Text(greeting, style = MaterialTheme.typography.bodyMedium, color = Color.Gray)
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
+                // Refresh button (Always rendered)
+                IconButton(
+                    onClick = {
+                        if (!isRefreshing && syncManager != null) {
+                            isRefreshing = true
+                            coroutineScope.launch {
+                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    syncManager.manualRefresh()
+                                }
+                                cycleTracker.refreshCycleState()
+                                isRefreshing = false
+                            }
+                        }
+                    },
+                    enabled = !isRefreshing && syncManager != null
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Refresh Data",
+                        tint = if (isRefreshing || syncManager == null) Color.LightGray else periodColor
+                    )
+                }
+
                 // Theme Switcher
                 IconButton(onClick = {
                     val nextTheme = if (currentThemeName == "Default") "Baby Blue" else "Default"
@@ -115,10 +138,8 @@ fun MainDashboard(
                     Icon(Icons.Default.Palette, contentDescription = "Switch Theme", tint = periodColor)
                 }
                 
-                if (!isPartnerView) {
-                    IconButton(onClick = onSettingsClick) {
-                        Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.Gray)
-                    }
+                IconButton(onClick = onSettingsClick) {
+                    Icon(Icons.Default.Settings, contentDescription = "Settings", tint = Color.Gray)
                 }
             }
         }
@@ -136,7 +157,7 @@ fun MainDashboard(
                     modifier = Modifier.size(240.dp).clip(CircleShape).background(Color(0xFFF3F4F6)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(if (!canShowPhase) "Phase hidden by partner" else "Phase hidden", style = MaterialTheme.typography.titleMedium, color = Color.Gray)
+                    Text(if (!canShowPhase) "Phase hidden by partner" else if (entries.isEmpty()) "No cycle logs yet" else "Phase hidden", style = MaterialTheme.typography.titleMedium, color = Color.Gray)
                 }
             }
         }
@@ -151,7 +172,7 @@ fun MainDashboard(
                     val msg = if (daysUntil >= 0) "$daysUntil days until next cycle" else "Period late by ${-daysUntil} days"
                     Text(msg, style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
                 } else {
-                    Text(if (!canShowPhase) "Predictions hidden by partner" else "Predictions not shared", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
+                    Text(if (!canShowPhase) "Predictions hidden by partner" else if (entries.isEmpty()) "Log symptoms to view predictions" else "Predictions not shared", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
                 }
             }
         }

@@ -35,6 +35,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun LogEntryScreen(
     initialEntry: com.novarytm.db.CycleEntry? = null,
+    initialEndDate: String? = null,
     isReadOnly: Boolean = false,
     onSave: (startDate: String, endDate: String, intensity: Int, notes: String, sexualRelations: String?, painLevel: Int?, symptoms: String?) -> Unit,
     onCancel: () -> Unit
@@ -48,11 +49,15 @@ fun LogEntryScreen(
     
     // Default to today or initial entry date
     val systemTimeZone = TimeZone.currentSystemDefault()
-    var endDate by remember { 
-        mutableStateOf(initialEntry?.date?.let { LocalDate.parse(it) } ?: Clock.System.now().toLocalDateTime(systemTimeZone).date) 
-    }
     var currentDate by remember { 
         mutableStateOf(initialEntry?.date?.let { LocalDate.parse(it) } ?: Clock.System.now().toLocalDateTime(systemTimeZone).date) 
+    }
+    var endDate by remember { 
+        mutableStateOf(
+            initialEndDate?.let { LocalDate.parse(it) }
+                ?: initialEntry?.date?.let { LocalDate.parse(it) }
+                ?: Clock.System.now().toLocalDateTime(systemTimeZone).date
+        ) 
     }
     
     var showDateRangePicker by remember { mutableStateOf(false) }

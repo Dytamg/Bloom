@@ -33,7 +33,7 @@ actual class GoogleAuthManager(private val storage: SecureStorageManager) {
             "response_type=token&" +
             "redirect_uri=$redirectUri&" +
             "prompt=consent&" +
-            "scope=https://www.googleapis.com/auth/drive.appdata"
+            "scope=https://www.googleapis.com/auth/drive.file"
 
         val authUrl = NSURL.URLWithString(authUrlString)
         
@@ -60,12 +60,12 @@ actual class GoogleAuthManager(private val storage: SecureStorageManager) {
                     val token = params["access_token"]
                     val grantedScopes = params["scope"] ?: ""
                     
-                    if (token != null && grantedScopes.contains("drive.appdata")) {
+                    if (token != null && (grantedScopes.contains("drive.file") || grantedScopes.contains("drive"))) {
                         accessToken = token
                         storage.setAuthFlowActive(false)
                         continuation.resume(true)
                     } else {
-                        println("iOS Auth Warning: Token missing or drive.appdata scope not granted. Scopes: $grantedScopes")
+                        println("iOS Auth Warning: Token missing or drive.file scope not granted. Scopes: $grantedScopes")
                         accessToken = null
                         storage.setAuthFlowActive(false)
                         continuation.resume(false)
