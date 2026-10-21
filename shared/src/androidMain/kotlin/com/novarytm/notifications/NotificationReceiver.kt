@@ -37,5 +37,10 @@ class NotificationReceiver : BroadcastReceiver() {
             .build()
 
         notificationManager.notify(id, notification)
+
+        val repeatMs = intent.getLongExtra("REPEAT_INTERVAL_MS", 0L)
+        if (repeatMs > 0L) {
+            NotificationScheduler(context).scheduleNotification(id, title, body, repeatMs)
+        }
     }
 }

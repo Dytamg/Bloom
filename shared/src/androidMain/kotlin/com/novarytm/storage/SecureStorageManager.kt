@@ -55,8 +55,7 @@ actual class SecureStorageManager(private val context: Context) {
             )
         } catch (e: Exception) {
             android.util.Log.e("SecureStorage", "CRITICAL: EncryptedSharedPreferences completely failed. App cannot persist keys safely.", e)
-            // Return plain prefs as absolute last resort — but this should essentially never happen
-            context.getSharedPreferences("secure_prefs_emergency", Context.MODE_PRIVATE)
+            throw IllegalStateException("EncryptedSharedPreferences initialization failed after 10 retries. Cannot store secrets safely.")
         }
     }
 
@@ -126,8 +125,7 @@ actual class SecureStorageManager(private val context: Context) {
 
     // VULN-04 FIX: Master key is wrapped with hardware-backed Keystore AES-GCM key
     actual fun saveMasterKey(key: ByteArray) {
-        val fingerprint = java.security.MessageDigest.getInstance("SHA-256").digest(key).take(4).joinToString("") { "%02x".format(it) }
-        android.util.Log.w("BLOOM_DIAG", "saveMasterKey: fingerprint=$fingerprint, size=${key.size}")
+
         val wrapper = keystoreWrapperKey
         if (wrapper != null) {
             try {
@@ -157,20 +155,19 @@ actual class SecureStorageManager(private val context: Context) {
     actual fun getMasterKey(): ByteArray? {
         val wrappedBase64 = sharedPreferences.getString("master_key_wrapped", null)
         val wrapper = keystoreWrapperKey
-        android.util.Log.i("SecureStorage", "getMasterKey: wrappedBase64=${if (wrappedBase64 != null) "present(${wrappedBase64.length}chars)" else "NULL"}, keystoreWrapper=${if (wrapper != null) "present" else "NULL"}")
+
         if (wrappedBase64 != null && wrapper != null) {
             for (attempt in 0..2) {
                 try {
                     val combined = android.util.Base64.decode(wrappedBase64, android.util.Base64.DEFAULT)
-                    android.util.Log.d("SecureStorage", "getMasterKey: combined.size=${combined.size}, attempt=$attempt")
+
                     if (combined.size >= 12) {
                         val iv = combined.sliceArray(0 until 12)
                         val encrypted = combined.sliceArray(12 until combined.size)
                         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
                         cipher.init(Cipher.DECRYPT_MODE, wrapper, GCMParameterSpec(128, iv))
                         val result = cipher.doFinal(encrypted)
-                        val fp = java.security.MessageDigest.getInstance("SHA-256").digest(result).take(4).joinToString("") { "%02x".format(it) }
-                        android.util.Log.i("SecureStorage", "getMasterKey: SUCCESS unwrapped ${result.size} bytes on attempt $attempt, fingerprint=$fp")
+
                         return result
                     }
                 } catch (e: Exception) {
@@ -178,16 +175,20 @@ actual class SecureStorageManager(private val context: Context) {
                     if (attempt < 2) Thread.sleep(60)
                 }
             }
-            android.util.Log.e("SecureStorage", "getMasterKey: ALL 3 Keystore unwrap attempts FAILED — falling through to legacy")
+            android.util.Log.e("SecureStorage", "getMasterKey: Keystore unwrap failed — falling through to legacy")
         }
         // Fallback: read legacy plaintext key (pre-VULN-04 installations)
         val legacyBase64 = sharedPreferences.getString("master_key", null)
-        android.util.Log.i("SecureStorage", "getMasterKey: legacyBase64=${if (legacyBase64 != null) "present" else "NULL"}")
+
         if (legacyBase64 == null) return null
         return try {
             val legacyKey = android.util.Base64.decode(legacyBase64, android.util.Base64.DEFAULT)
-            saveMasterKey(legacyKey)
-            legacyKey
+            try {
+                saveMasterKey(legacyKey)
+                legacyKey.copyOf()
+            } finally {
+                legacyKey.fill(0)
+            }
         } catch (e: Exception) { null }
     }
 
@@ -252,8 +253,12 @@ actual class SecureStorageManager(private val context: Context) {
         val legacyBase64 = sharedPreferences.getString("sync_secret_key", null) ?: return null
         return try {
             val legacyKey = android.util.Base64.decode(legacyBase64, android.util.Base64.DEFAULT)
-            saveSyncSecretKey(legacyKey)
-            legacyKey
+            try {
+                saveSyncSecretKey(legacyKey)
+                legacyKey.copyOf()
+            } finally {
+                legacyKey.fill(0)
+            }
         } catch (e: Exception) { null }
     }
 
@@ -323,14 +328,12 @@ actual class SecureStorageManager(private val context: Context) {
     }
 
     actual fun clearAll() {
-        android.util.Log.w("SecureStorage", "clearAll() CALLED — wiping all preferences")
-        Thread.currentThread().stackTrace.take(10).forEach { android.util.Log.w("SecureStorage", "  at $it") }
         sharedPreferences.edit().clear().commit()
     }
 
     actual fun copyToClipboardSecurely(text: String) {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-        val clip = android.content.ClipData.newPlainText("Bloom Secret", text)
+        val clip = android.content.ClipData.newPlainText("Copied Text", text)
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             clip.description.extras = android.os.PersistableBundle().apply {
                 putBoolean("android.content.extra.IS_SENSITIVE", true)

@@ -13,11 +13,25 @@ pub struct CyclePrediction {
 pub fn predict_irregular_cycle(historical_lengths: &[u32]) -> CyclePrediction {
     let n = historical_lengths.len() as f64;
     
-    if n < 3.0 {
+    if historical_lengths.is_empty() {
         return CyclePrediction {
             estimated_length_days: 28,
             variance_days: 0,
             is_irregular: false,
+        };
+    }
+
+    if historical_lengths.len() < 3 {
+        let sum: u32 = historical_lengths.iter().sum();
+        let mean = (sum as f64 / n).round() as u32;
+        let estimated = mean.clamp(21, 45);
+        let max = *historical_lengths.iter().max().unwrap();
+        let min = *historical_lengths.iter().min().unwrap();
+        let is_irregular = (max - min) > 7;
+        return CyclePrediction {
+            estimated_length_days: estimated,
+            variance_days: 0,
+            is_irregular,
         };
     }
 
@@ -65,7 +79,7 @@ pub fn predict_irregular_cycle(historical_lengths: &[u32]) -> CyclePrediction {
     let threshold = if mad_std_dev > 2.0 { mad_std_dev * 2.0 } else { 4.0 };
     
     let lower_bound = (median - threshold).max(15.0);
-    let upper_bound = (median + threshold).min(90.0);
+    let upper_bound = (median + threshold).min(90.0).max(lower_bound);
 
     // 4. Exponential Moving Average (EMA) with Winsorization
     let alpha = 0.4; // Weight for the most recent observation

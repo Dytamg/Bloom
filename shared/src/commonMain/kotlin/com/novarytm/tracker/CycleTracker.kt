@@ -91,9 +91,13 @@ class CycleTracker(
                 val dateStr = date.toString()
                 val existing = cycleQueries.selectEntryByDate(dateStr).executeAsOneOrNull()
                 val validIntensity = intensity.coerceIn(0, 5)
-                val validPainLevel = (painLevel ?: existing?.painLevel)?.coerceIn(1, 10)
-                val cleanSymptoms = sanitizeSymptoms(symptoms ?: existing?.symptoms)
-                cycleQueries.insertEntry(dateStr, validIntensity, sanitizeNote(notes), sexualRelations ?: existing?.sexualRelations, validPainLevel, cleanSymptoms)
+                val validPainLevel = (painLevel ?: existing?.painLevel)?.coerceIn(0, 10)
+                val finalSymptoms = if (symptoms != null) {
+                    if (symptoms.isEmpty()) null else sanitizeSymptoms(symptoms)
+                } else {
+                    existing?.symptoms
+                }
+                cycleQueries.insertEntry(dateStr, validIntensity, sanitizeNote(notes), sexualRelations ?: existing?.sexualRelations, validPainLevel, finalSymptoms)
                 val count = cycleQueries.selectAllEntries().executeAsList().size
                 android.util.Log.w("BLOOM_DIAG", "CycleTracker.logNewPeriod: inserted date=$dateStr, intensity=$validIntensity, totalEntries=$count")
                 refreshCycleStateInternal()
@@ -131,7 +135,7 @@ class CycleTracker(
                 val sanitized = sanitizeNote(notes)
                 val cleanSymptoms = sanitizeSymptoms(symptoms)
                 val validIntensity = intensity.coerceIn(0, 5)
-                val validPain = painLevel?.coerceIn(1, 10)
+                val validPain = painLevel?.coerceIn(0, 10)
                 var currentDate = startDate
                 var isFirstDay = true
                 cycleQueries.transaction {
@@ -143,7 +147,11 @@ class CycleTracker(
                         val finalNotes = dayNotes ?: existing?.notes
                         val finalRelations = existing?.sexualRelations ?: sexualRelations?.take(50)
                         val finalPainLevel = validPain ?: existing?.painLevel
-                        val finalSymptoms = cleanSymptoms ?: existing?.symptoms
+                        val finalSymptoms = if (symptoms != null) {
+                            if (symptoms.isEmpty()) null else cleanSymptoms
+                        } else {
+                            existing?.symptoms
+                        }
                         
                         cycleQueries.insertEntry(dateStr, validIntensity, finalNotes, finalRelations, finalPainLevel, finalSymptoms)
                         

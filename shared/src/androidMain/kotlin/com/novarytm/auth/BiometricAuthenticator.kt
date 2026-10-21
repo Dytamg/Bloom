@@ -55,7 +55,6 @@ actual fun BiometricPromptEffect(
 
                     override fun onAuthenticationFailed() {
                         super.onAuthenticationFailed()
-                        onError("Authentication failed")
                     }
                 }
             )

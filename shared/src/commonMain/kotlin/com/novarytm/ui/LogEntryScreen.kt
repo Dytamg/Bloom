@@ -42,7 +42,7 @@ fun LogEntryScreen(
 ) {
     var selectedIntensity by remember { mutableStateOf(initialEntry?.intensity ?: 3) }
     var notes by remember { mutableStateOf(initialEntry?.notes ?: "") }
-    var painLevel by remember { mutableStateOf(initialEntry?.painLevel?.toFloat() ?: 1f) }
+    var painLevel by remember { mutableStateOf(initialEntry?.painLevel?.toFloat() ?: 0f) }
     var selectedSymptoms by remember { 
         mutableStateOf(initialEntry?.symptoms?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }?.toSet() ?: emptySet())
     }
@@ -126,7 +126,7 @@ fun LogEntryScreen(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
-            (1..5).forEach { level ->
+            (0..5).forEach { level ->
                 IntensityButton(
                     level = level,
                     isSelected = selectedIntensity == level,
@@ -137,12 +137,13 @@ fun LogEntryScreen(
         }
         Spacer(Modifier.height(32.dp))
         
-        Text("Pain Level: ${painLevel.toInt()}/10", style = MaterialTheme.typography.titleMedium)
+        val painDisplay = if (painLevel.toInt() == 0) "0/10 (No pain)" else "${painLevel.toInt()}/10"
+        Text("Pain Level: $painDisplay", style = MaterialTheme.typography.titleMedium)
         Slider(
             value = painLevel,
             onValueChange = { if (!isReadOnly) painLevel = it },
-            valueRange = 1f..10f,
-            steps = 8,
+            valueRange = 0f..10f,
+            steps = 9,
             enabled = !isReadOnly,
             colors = SliderDefaults.colors(
                 thumbColor = periodColor,
@@ -152,7 +153,7 @@ fun LogEntryScreen(
                 inactiveTickColor = periodColor.copy(alpha = 0.5f)
             ),
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).semantics {
-                contentDescription = "Pain Level ${painLevel.roundToInt()} out of 10"
+                contentDescription = "Pain Level $painDisplay"
             }
         )
         
@@ -232,7 +233,7 @@ fun LogEntryScreen(
         if (!isReadOnly) {
             Button(
                 onClick = { 
-                    val symptomsStr = if (selectedSymptoms.isEmpty()) null else selectedSymptoms.joinToString(",")
+                    val symptomsStr = selectedSymptoms.joinToString(",")
                     onSave(currentDate.toString(), endDate.toString(), selectedIntensity, notes, initialEntry?.sexualRelations, painLevel.roundToInt(), symptomsStr) 
                 },
                 modifier = Modifier.fillMaxWidth().height(56.dp),
@@ -255,7 +256,7 @@ fun IntensityButton(level: Int, isSelected: Boolean, color: Color, onClick: () -
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             modifier = Modifier
-                .size(56.dp)
+                .size(48.dp)
                 .clip(RoundedCornerShape(16.dp))
                 .background(if (isSelected) color else color.copy(alpha = 0.1f))
                 .clickable { onClick() },
@@ -271,6 +272,7 @@ fun IntensityButton(level: Int, isSelected: Boolean, color: Color, onClick: () -
         Spacer(Modifier.height(4.dp))
         Text(
             text = when(level) {
+                0 -> "None"
                 1 -> "Spot"
                 2 -> "Light"
                 3 -> "Med"
@@ -321,6 +323,7 @@ fun CustomDateRangePickerDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(securePolicy = androidx.compose.ui.window.SecureFlagPolicy.SecureOn),
         containerColor = LocalAppColors.current.surface,
         title = {
             Column {

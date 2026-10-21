@@ -27,6 +27,7 @@ import kotlin.time.Clock
 import com.novarytm.auth.GoogleAuthManager
 import com.novarytm.ffi.RustBridge
 import com.novarytm.sync.SyncManager
+import com.novarytm.utils.AppStrings
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 
@@ -42,6 +43,8 @@ fun ConnectPartnerScreen(
 ) {
     var syncCodeInput by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var syncCodeAttempts by remember { mutableStateOf(0) }
+    var syncCodeLockedUntil by remember { mutableStateOf(0L) }
     var isLoading by remember { mutableStateOf(false) }
     val primaryColor = LocalAppColors.current.primary
     val scope = rememberCoroutineScope()
@@ -49,7 +52,7 @@ fun ConnectPartnerScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Connect with Partner") },
+                title = { Text(AppStrings.get("connect_title")) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -78,7 +81,7 @@ fun ConnectPartnerScreen(
             Spacer(Modifier.height(24.dp))
             
             Text(
-                "Enter Partner's Details",
+                AppStrings.get("enter_details"),
                 style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
                 color = Color(0xFF3E3636)
             )
@@ -86,7 +89,7 @@ fun ConnectPartnerScreen(
             Spacer(Modifier.height(16.dp))
             
             Text(
-                "Paste the 5-minute Sync Code provided by your partner.",
+                AppStrings.get("paste_code_instruction"),
                 style = MaterialTheme.typography.bodyMedium,
                 color = Color.Gray,
                 textAlign = TextAlign.Center
@@ -101,7 +104,7 @@ fun ConnectPartnerScreen(
                     errorMessage = null
                 },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Sync Code") },
+                label = { Text(AppStrings.get("sync_code_field")) },
                 singleLine = true,
                 isError = errorMessage != null,
                 supportingText = { errorMessage?.let { Text(it) } },
@@ -119,10 +122,19 @@ fun ConnectPartnerScreen(
                     scope.launch {
                         isLoading = true
                         try {
+                            val rateLimitNow = Clock.System.now().toEpochMilliseconds()
+                            if (syncCodeAttempts >= 3 && rateLimitNow < syncCodeLockedUntil) {
+                                errorMessage = "Too many attempts. Please wait 30 seconds."
+                                return@launch
+                            }
                             val cleanInput = syncCodeInput.trim()
                             val colonIndex = cleanInput.indexOf(':')
                             if (colonIndex == -1) {
-                                errorMessage = "Invalid Sync Code format."
+                                syncCodeAttempts++
+                                if (syncCodeAttempts >= 3) {
+                                    syncCodeLockedUntil = Clock.System.now().toEpochMilliseconds() + 30_000L
+                                }
+                                errorMessage = AppStrings.get("invalid_format")
                                 return@launch
                             }
                             val ephemeralKey = cleanInput.substring(0, colonIndex)
@@ -131,7 +143,11 @@ fun ConnectPartnerScreen(
                             @OptIn(ExperimentalEncodingApi::class)
                             val decoded = rustBridge.decryptFromSync(ciphertext, ephemeralKey)
                             if (decoded.isEmpty()) {
-                                errorMessage = "Invalid or expired Sync Code."
+                                syncCodeAttempts++
+                                if (syncCodeAttempts >= 3) {
+                                    syncCodeLockedUntil = Clock.System.now().toEpochMilliseconds() + 30_000L
+                                }
+                                errorMessage = AppStrings.get("invalid_code")
                                 return@launch
                             }
                             val parts = decoded.split("|")
@@ -145,19 +161,28 @@ fun ConnectPartnerScreen(
                                 
                                 // 5 minutes (with clock skew protection)
                                 if (timestamp != null && kotlin.math.abs(now - timestamp) <= SYNC_CODE_EXPIRATION_MS) {
+                                    syncCodeAttempts = 0
                                     val keyBytes = Base64.Default.decode(encryptionKeyBase64)
                                         
                                     // Trigger Google Sign In before completing
                                     googleAuthManager.signIn()
                                     onIdEntered(fileId, keyBytes)
                                 } else {
-                                    errorMessage = "This Sync Code has expired or your clock is out of sync. Please check device time and ask for a new code."
+                                    syncCodeAttempts++
+                                    if (syncCodeAttempts >= 3) {
+                                        syncCodeLockedUntil = Clock.System.now().toEpochMilliseconds() + 30_000L
+                                    }
+                                    errorMessage = AppStrings.get("expired_code")
                                 }
                             } else {
-                                errorMessage = "Invalid code format."
+                                syncCodeAttempts++
+                                if (syncCodeAttempts >= 3) {
+                                    syncCodeLockedUntil = Clock.System.now().toEpochMilliseconds() + 30_000L
+                                }
+                                errorMessage = AppStrings.get("invalid_format")
                             }
                         } catch (e: Exception) {
-                            errorMessage = "Invalid Sync Code."
+                            errorMessage = AppStrings.get("invalid_code")
                         }
                         isLoading = false
                     }
@@ -170,7 +195,7 @@ fun ConnectPartnerScreen(
                 if (isLoading) {
                     CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp))
                 } else {
-                    Text("Connect and Set PIN", style = MaterialTheme.typography.titleMedium)
+                    Text(AppStrings.get("connect_button"), style = MaterialTheme.typography.titleMedium)
                 }
             }
         }

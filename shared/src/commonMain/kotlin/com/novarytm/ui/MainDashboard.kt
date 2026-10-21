@@ -60,9 +60,26 @@ fun MainDashboard(
     
     val avgLength = analysis.averageLength
     
-    val lastEntryDate = entries.filter { (it.intensity ?: 0) > 0 }.maxByOrNull { it.date }?.date
+    val sortedBleedingDates = remember(entries) {
+        entries.filter { (it.intensity ?: 0) > 0 }
+            .mapNotNull { runCatching { kotlinx.datetime.LocalDate.parse(it.date) }.getOrNull() }
+            .sorted()
+    }
+    val latestCycleStartDate = remember(sortedBleedingDates) {
+        if (sortedBleedingDates.isEmpty()) null else {
+            val starts = mutableListOf<kotlinx.datetime.LocalDate>()
+            starts.add(sortedBleedingDates[0])
+            for (i in 1 until sortedBleedingDates.size) {
+                if (sortedBleedingDates[i].toEpochDays() - sortedBleedingDates[i - 1].toEpochDays() > 7L) {
+                    starts.add(sortedBleedingDates[i])
+                }
+            }
+            starts.lastOrNull()?.toString()
+        }
+    }
+    val lastEntryDate = latestCycleStartDate
     
-    val lastDate = lastEntryDate ?: Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).date.toString()
+    val lastDate = latestCycleStartDate ?: Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).date.toString()
     
     val currentPhase by produceState(
         initialValue = "Loading",
@@ -70,7 +87,7 @@ fun MainDashboard(
         key2 = avgLength
     ) {
         value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-            if (lastEntryDate == null) {
+            if (latestCycleStartDate == null) {
                 "Hidden"
             } else {
                 rustBridge.calculatePhase(lastDate, avgLength)
@@ -263,30 +280,30 @@ fun OwnerStatsGrid(entries: List<CycleEntry>, avgLength: Int) {
     val fertileColor = appColors.secondary
 
     val sortedPeriodDates = androidx.compose.runtime.remember(entries) {
-        entries.filter { (it.intensity ?: 0) > 0 }.map { kotlinx.datetime.LocalDate.parse(it.date) }.sorted()
+        entries.filter { (it.intensity ?: 0) > 0 }.mapNotNull { runCatching { kotlinx.datetime.LocalDate.parse(it.date) }.getOrNull() }.sorted()
     }
-    val cyclesTracked = androidx.compose.runtime.remember(sortedPeriodDates) {
-        if (sortedPeriodDates.isEmpty()) 0 else {
-            var count = 1
+    val cycleStarts = androidx.compose.runtime.remember(sortedPeriodDates) {
+        if (sortedPeriodDates.isEmpty()) emptyList() else {
+            val starts = mutableListOf<kotlinx.datetime.LocalDate>()
+            starts.add(sortedPeriodDates[0])
             for (i in 1 until sortedPeriodDates.size) {
-                if (sortedPeriodDates[i].toEpochDays() - sortedPeriodDates[i-1].toEpochDays() > 15L) {
-                    count++
+                if (sortedPeriodDates[i].toEpochDays() - sortedPeriodDates[i-1].toEpochDays() > 7L) {
+                    starts.add(sortedPeriodDates[i])
                 }
             }
-            count
+            starts
         }
     }
+    val cyclesTracked = cycleStarts.size
     val avgPeriodDuration = androidx.compose.runtime.remember(sortedPeriodDates) {
         if (sortedPeriodDates.isEmpty()) "--" else {
             val durations = mutableListOf<Int>()
             var currentDuration = 1
             for (i in 1 until sortedPeriodDates.size) {
                 val gap = sortedPeriodDates[i].toEpochDays() - sortedPeriodDates[i-1].toEpochDays()
-                if (gap == 1L) {
-                    currentDuration++
-                } else if (gap <= 15L) {
+                if (gap in 1L..3L) {
                     currentDuration += gap.toInt()
-                } else {
+                } else if (gap > 7L) {
                     durations.add(currentDuration)
                     currentDuration = 1
                 }
@@ -296,13 +313,13 @@ fun OwnerStatsGrid(entries: List<CycleEntry>, avgLength: Int) {
         }
     }
 
-    val cycleLengths = androidx.compose.runtime.remember(sortedPeriodDates) {
-        if (sortedPeriodDates.size < 2) emptyList() else {
+    val cycleLengths = androidx.compose.runtime.remember(cycleStarts) {
+        if (cycleStarts.size < 2) emptyList() else {
             val lengths = mutableListOf<Long>()
-            for (i in 1 until sortedPeriodDates.size) {
-                val gap = sortedPeriodDates[i].toEpochDays() - sortedPeriodDates[i - 1].toEpochDays()
-                if (gap > 15L) {
-                    lengths.add(gap)
+            for (i in 1 until cycleStarts.size) {
+                val diff = cycleStarts[i].toEpochDays() - cycleStarts[i - 1].toEpochDays()
+                if (diff in 15..90) {
+                    lengths.add(diff)
                 }
             }
             lengths
@@ -426,30 +443,30 @@ fun PartnerStatsGrid(entries: List<CycleEntry>, birthControl: com.novarytm.db.Bi
     val primaryVariant = appColors.primaryVariant
 
     val sortedPeriodDates = androidx.compose.runtime.remember(entries) {
-        entries.filter { (it.intensity ?: 0) > 0 }.map { kotlinx.datetime.LocalDate.parse(it.date) }.sorted()
+        entries.filter { (it.intensity ?: 0) > 0 }.mapNotNull { runCatching { kotlinx.datetime.LocalDate.parse(it.date) }.getOrNull() }.sorted()
     }
-    val cyclesTracked = androidx.compose.runtime.remember(sortedPeriodDates) {
-        if (sortedPeriodDates.isEmpty()) 0 else {
-            var count = 1
+    val cycleStarts = androidx.compose.runtime.remember(sortedPeriodDates) {
+        if (sortedPeriodDates.isEmpty()) emptyList() else {
+            val starts = mutableListOf<kotlinx.datetime.LocalDate>()
+            starts.add(sortedPeriodDates[0])
             for (i in 1 until sortedPeriodDates.size) {
-                if (sortedPeriodDates[i].toEpochDays() - sortedPeriodDates[i-1].toEpochDays() > 15L) {
-                    count++
+                if (sortedPeriodDates[i].toEpochDays() - sortedPeriodDates[i-1].toEpochDays() > 7L) {
+                    starts.add(sortedPeriodDates[i])
                 }
             }
-            count
+            starts
         }
     }
+    val cyclesTracked = cycleStarts.size
     val avgPeriodDuration = androidx.compose.runtime.remember(sortedPeriodDates) {
         if (sortedPeriodDates.isEmpty()) "--" else {
             val durations = mutableListOf<Int>()
             var currentDuration = 1
             for (i in 1 until sortedPeriodDates.size) {
                 val gap = sortedPeriodDates[i].toEpochDays() - sortedPeriodDates[i-1].toEpochDays()
-                if (gap == 1L) {
-                    currentDuration++
-                } else if (gap <= 15L) {
+                if (gap in 1L..3L) {
                     currentDuration += gap.toInt()
-                } else {
+                } else if (gap > 7L) {
                     durations.add(currentDuration)
                     currentDuration = 1
                 }

@@ -125,7 +125,9 @@ fun CreatePinScreen(
                                             step = 1
                                         } else {
                                             if (currentEntryBytes.contentEquals(firstEntryBytes)) {
-                                                val salt = rustBridge.generateRandomKey().sliceArray(0 until 16)
+                                                val randomKey = rustBridge.generateRandomKey()
+                                                val salt = randomKey.sliceArray(0 until 16)
+                                                randomKey.fill(0)
                                                 try {
                                                     val hash = rustBridge.generatePinHash(currentEntryBytes)
                                                     val masterKey = rustBridge.deriveKey(currentEntryBytes, salt)
@@ -155,7 +157,9 @@ fun CreatePinScreen(
                                             currentEntryBytes = newArr
                                             if (step == 1 && currentEntryBytes.size == firstEntryBytes.size) {
                                                 if (currentEntryBytes.contentEquals(firstEntryBytes)) {
-                                                    val salt = rustBridge.generateRandomKey().sliceArray(0 until 16)
+                                                    val randomKey = rustBridge.generateRandomKey()
+                                                    val salt = randomKey.sliceArray(0 until 16)
+                                                    randomKey.fill(0)
                                                     try {
                                                         val hash = rustBridge.generatePinHash(currentEntryBytes)
                                                         val masterKey = rustBridge.deriveKey(currentEntryBytes, salt)

@@ -1,6 +1,9 @@
+@file:OptIn(kotlin.time.ExperimentalTime::class)
+
 package com.novarytm.ui
 
 import kotlinx.datetime.*
+import kotlin.time.Clock
 import app.cash.sqldelight.coroutines.asFlow
 import app.cash.sqldelight.coroutines.mapToList
 import app.cash.sqldelight.coroutines.mapToOneOrNull
@@ -92,7 +95,7 @@ fun App(database: NovarytmDatabase, driver: SqlDriver, rustBridge: RustBridge, s
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_PAUSE) {
+            if (event == Lifecycle.Event.ON_STOP) {
                 sessionManager.lock()
             }
         }
@@ -143,10 +146,7 @@ fun App(database: NovarytmDatabase, driver: SqlDriver, rustBridge: RustBridge, s
         else cycleQueries.selectAllEntries().asFlow().mapToList(Dispatchers.IO)
     }.collectAsState(initial = emptyList())
 
-    // BLOOM_DIAG: Track entry count changes
-    LaunchedEffect(latestEntries.size) {
-        android.util.Log.w("BLOOM_DIAG", "latestEntries.size = ${latestEntries.size}, isInitializing = $isInitializing")
-    }
+
     
     val birthControl by remember(isInitializing) {
         if (isInitializing) kotlinx.coroutines.flow.flowOf(null)
@@ -158,14 +158,13 @@ fun App(database: NovarytmDatabase, driver: SqlDriver, rustBridge: RustBridge, s
         CycleTracker(rustBridge, cycleQueries, coroutineScope) 
     }
     var triggerStepUpAuth by remember { mutableStateOf(0) }
+    var stepUpFallbackTrigger by remember { mutableStateOf(0) }
     var retryTrigger by remember { mutableStateOf(0) }
 
     // Initialization Logic Audit: Move to background thread
     LaunchedEffect(retryTrigger) {
         try {
-            println("App initialization started")
             withContext(Dispatchers.IO) {
-                println("Inside IO context, executing getBirthControl")
                 // Perform any necessary disk/native migrations or initial checks here
                 // Force load queries to check DB health
                 database.cycleQueries.getBirthControl().executeAsOneOrNull()
@@ -176,20 +175,17 @@ fun App(database: NovarytmDatabase, driver: SqlDriver, rustBridge: RustBridge, s
                         val perms = com.novarytm.utils.AppJson.decodeFromString<com.novarytm.sync.PartnerPermissions>(savedPermsJson)
                         rustBridge.savePartnerPermissions(perms)
                     } catch (e: Exception) {
-                        e.printStackTrace()
+    
                     }
                 }
                 
-                println("getBirthControl finished, delaying")
                 delay(500) // Aesthetic delay for splash
-                println("delay finished")
             }
-            println("Setting isInitializing to false")
+
             isInitializing = false
             cycleTracker.refreshCycleState()
         } catch (e: Throwable) {
-            println("App initialization caught exception: ${e.message}")
-            e.printStackTrace()
+
             criticalError = e.message ?: "Critical initialization failure"
         }
     }
@@ -202,6 +198,7 @@ fun App(database: NovarytmDatabase, driver: SqlDriver, rustBridge: RustBridge, s
             onScreenChange(Screen.PartnerPermissions)
         },
         onError = {
+            stepUpFallbackTrigger++
         }
     )
 
@@ -284,6 +281,7 @@ fun App(database: NovarytmDatabase, driver: SqlDriver, rustBridge: RustBridge, s
                     notificationScheduler = notificationScheduler,
                     googleAuthManager = googleAuthManager,
                     onTriggerStepUpAuth = { triggerStepUpAuth++ },
+                    stepUpFallbackTrigger = stepUpFallbackTrigger,
                     currentThemeName = currentThemeName,
                     onThemeChange = { newTheme ->
                         currentThemeName = newTheme
@@ -332,6 +330,7 @@ fun AppContent(
     notificationScheduler: com.novarytm.notifications.NotificationScheduler,
     googleAuthManager: GoogleAuthManager,
     onTriggerStepUpAuth: () -> Unit,
+    stepUpFallbackTrigger: Int = 0,
     currentThemeName: String,
     onThemeChange: (String) -> Unit,
     canGoBack: Boolean,
@@ -341,6 +340,13 @@ fun AppContent(
     var editingEntry by remember { mutableStateOf<CycleEntry?>(null) }
     var editingEndDate by remember { mutableStateOf<String?>(null) }
     var showStepUpPinScreen by remember { mutableStateOf(false) }
+    var stepUpFailedAttempts by remember { mutableStateOf(0) }
+    var stepUpLockedUntil by remember { mutableStateOf(0L) }
+    LaunchedEffect(stepUpFallbackTrigger) {
+        if (stepUpFallbackTrigger > 0) {
+            showStepUpPinScreen = true
+        }
+    }
     when (val state = sessionState) {
         is SessionState.Onboarding -> {
             AppBackHandler(enabled = onboardingStage !is OnboardingStage.Welcome) {
@@ -412,7 +418,7 @@ fun AppContent(
                 pinHash = storage.getPinHash(),
                 onUnlocked = { sessionManager.unlock() },
                 onReset = { 
-                    android.util.Log.e("BLOOM_DIAG", "!!! deleteAllEntries CALLED FROM APP RESET !!!")
+
                     cycleQueries.deleteAllEntries()
                     cycleQueries.deleteBirthControl()
                     sessionManager.reset() 
@@ -423,18 +429,17 @@ fun AppContent(
             // Auto-Refresh on Unlock (for all accounts and partners)
             LaunchedEffect(Unit) {
                 try {
-                    android.util.Log.w("BLOOM_DIAG", "Unlock: isPartner=${state.isPartner}, justRestored=${state.justRestored}")
+
                     cycleTracker.refreshCycleState()
                     if (state.isPartner || state.justRestored) {
-                        android.util.Log.w("BLOOM_DIAG", "Unlock: TRIGGERING manualRefresh — WILL WIPE DB IF SYNC DOWNLOADS DATA")
+
                         withContext(Dispatchers.IO) {
                             syncManager?.manualRefresh()
                         }
                         cycleTracker.refreshCycleState()
                     }
                 } catch (e: Exception) {
-                    println("SYNC_FATAL: Crash during post-login sync: ${e.message}")
-                    e.printStackTrace()
+
                 }
             }
             
@@ -452,16 +457,33 @@ fun AppContent(
             }
 
             if (showStepUpPinScreen) {
+                val stepUpNow = Clock.System.now().toEpochMilliseconds()
+                if (stepUpFailedAttempts >= 5 && stepUpNow < stepUpLockedUntil) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("Too many failed attempts. Please wait 30 seconds.",
+                            color = Color.Red,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.padding(32.dp))
+                    }
+                } else {
                 LockScreen(
                     rustBridge = rustBridge,
                     storage = storage,
                     pinHash = storage.getPinHash(),
                     onUnlocked = {
+                        stepUpFailedAttempts = 0
                         showStepUpPinScreen = false
                         onScreenChange(Screen.PartnerPermissions)
                     },
-                    onReset = { showStepUpPinScreen = false }
+                    onReset = {
+                        stepUpFailedAttempts++
+                        if (stepUpFailedAttempts >= 5) {
+                            stepUpLockedUntil = Clock.System.now().toEpochMilliseconds() + 30_000L
+                        }
+                        showStepUpPinScreen = false
+                    }
                 )
+                }
             } else if (showLogScreen || editingEntry != null) {
                 Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
                     Box(modifier = Modifier.padding(padding)) {
@@ -470,11 +492,13 @@ fun AppContent(
                             initialEndDate = editingEndDate,
                             isReadOnly = state.isPartner,
                             onSave = { startDate, endDate, intensity, notes, sexualRelations, painLevel, symptoms ->
-                                cycleTracker.logNewPeriodRange(
-                                    kotlinx.datetime.LocalDate.parse(startDate), 
-                                    kotlinx.datetime.LocalDate.parse(endDate), 
-                                    intensity, notes, sexualRelations, painLevel, symptoms
-                                )
+                                if (!state.isPartner) {
+                                    cycleTracker.logNewPeriodRange(
+                                        kotlinx.datetime.LocalDate.parse(startDate), 
+                                        kotlinx.datetime.LocalDate.parse(endDate), 
+                                        intensity, notes, sexualRelations, painLevel, symptoms
+                                    )
+                                }
                                 onShowLogScreenChange(false)
                                 editingEntry = null
                                 editingEndDate = null
@@ -561,7 +585,40 @@ fun AppContent(
                         }
                     }
                     
-                    Box(modifier = Modifier.padding(padding).fillMaxSize()) {
+                    val syncStatusMsg = syncManager?.syncStatusMessage?.collectAsState()?.value
+
+                    Column(modifier = Modifier.padding(padding).fillMaxSize()) {
+                        // Drive storage warning banner
+                        if (syncStatusMsg != null) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(Color(0xFFFFF3CD))
+                                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.Warning,
+                                    contentDescription = null,
+                                    tint = Color(0xFF856404),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Text(
+                                    text = syncStatusMsg,
+                                    color = Color(0xFF856404),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                                )
+                                IconButton(
+                                    onClick = { syncManager?.clearSyncStatus() },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(Icons.Default.Close, contentDescription = "Dismiss", tint = Color(0xFF856404), modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+
+                        Box(modifier = Modifier.fillMaxSize()) {
                         when (currentScreen) {
                             is Screen.Home -> MainDashboard(
                                 rustBridge = rustBridge,
@@ -626,7 +683,7 @@ fun AppContent(
                                     )
                                 }
                             }
-                            is Screen.PartnerPermissions -> if (state.isPartner) Box(Modifier.fillMaxSize()) else PartnerPermissionsScreen(
+                            is Screen.PartnerPermissions -> if (state.isPartner) { LaunchedEffect(Unit) { onScreenChange(Screen.Home) } } else PartnerPermissionsScreen(
                                 rustBridge = rustBridge,
                                 isBiometricsEnabled = storage.isBiometricsEnabled(),
                                 onToggleBiometrics = { enabled ->
@@ -634,20 +691,25 @@ fun AppContent(
                                 },
                                 onBack = onBack,
                                 onSave = { perms ->
+                                    rustBridge.savePartnerPermissions(perms)
                                     storage.savePartnerPermissionsJson(com.novarytm.utils.AppJson.encodeToString(perms))
                                     syncManager?.scope?.launch {
                                         syncManager?.prepareAndUploadPayload()
                                     }
                                 }
                             )
-                            is Screen.PartnerSettings -> if (!state.isPartner) Box(Modifier.fillMaxSize()) else PartnerSettingsScreen(
+                            is Screen.PartnerSettings -> if (!state.isPartner) { LaunchedEffect(Unit) { onScreenChange(Screen.Home) } } else PartnerSettingsScreen(
                                 onBack = onBack,
                                 onDisconnect = {
                                     storage.saveTargetSyncId("")
+                                    cycleQueries.deleteAllEntries()
+                                    cycleQueries.deleteAllPregnancyTests()
+                                    cycleQueries.deleteAllReminders()
+                                    cycleQueries.deleteBirthControl()
                                     sessionManager.lock()
                                 }
                             )
-                            is Screen.ShareSyncCode -> if (state.isPartner) Box(Modifier.fillMaxSize()) else ShareSyncCodeScreen(
+                            is Screen.ShareSyncCode -> if (state.isPartner) { LaunchedEffect(Unit) { onScreenChange(Screen.Home) } } else ShareSyncCodeScreen(
                                 ownerId = userId,
                                 storage = storage,
                                 rustBridge = rustBridge,
@@ -659,7 +721,8 @@ fun AppContent(
                                 onOpenPermissions = { onScreenChange(Screen.PartnerPermissions) }
                             )
                         }
-                    }
+                        } // Box
+                    } // Column
                 }
             }
         }

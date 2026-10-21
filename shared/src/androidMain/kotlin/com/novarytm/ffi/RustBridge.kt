@@ -86,16 +86,47 @@ actual class RustBridge {
         }
     }
 
+    fun deriveKey(pin: String, salt: ByteArray): ByteArray {
+        val pinBytes = pin.encodeToByteArray()
+        try {
+            return deriveKey(pinBytes, salt)
+        } finally {
+            pinBytes.fill(0)
+        }
+    }
+
     actual fun generatePinHash(pin: ByteArray): ByteArray {
         return runCatching { generate_pin_hash(pin) }.getOrDefault(ByteArray(0))
+    }
+
+    fun generatePinHash(pin: String): ByteArray {
+        val pinBytes = pin.encodeToByteArray()
+        try {
+            return generatePinHash(pinBytes)
+        } finally {
+            pinBytes.fill(0)
+        }
     }
 
     actual fun verifyAndUnlock(pinHash: ByteArray, inputPin: ByteArray, salt: ByteArray): Boolean {
         return runCatching { verify_and_unlock(pinHash, inputPin, salt) }.getOrDefault(false)
     }
 
+    fun verifyAndUnlock(pinHash: ByteArray, inputPin: String, salt: ByteArray): Boolean {
+        val pinBytes = inputPin.encodeToByteArray()
+        try {
+            return verifyAndUnlock(pinHash, pinBytes, salt)
+        } finally {
+            pinBytes.fill(0)
+        }
+    }
+
     actual fun unlockWithBiometric(keyBytes: ByteArray): Boolean {
-        return runCatching { unlock_with_biometric(keyBytes) }.getOrDefault(false)
+        try {
+            return runCatching { unlock_with_biometric(keyBytes) }.getOrDefault(false)
+        } finally {
+            keyBytes.fill(0)
+        }
     }
 
     actual fun lockDatabase() {

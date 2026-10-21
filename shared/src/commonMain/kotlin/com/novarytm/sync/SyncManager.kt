@@ -32,6 +32,12 @@ class SyncManager(
     private val queries = database.cycleQueries
     private val uploadMutex = Mutex()
     private val syncAttemptTimestamps = mutableListOf<Long>()
+    private val _syncStatusMessage = MutableStateFlow<String?>(null)
+    val syncStatusMessage: StateFlow<String?> = _syncStatusMessage.asStateFlow()
+
+    fun clearSyncStatus() {
+        _syncStatusMessage.value = null
+    }
 
     private fun checkRateLimit(): Boolean {
         val now = Clock.System.now().toEpochMilliseconds()
@@ -121,10 +127,17 @@ class SyncManager(
             val encryptedBase64 = rustBridge.encryptForSync(fullJson, encryptionKeyBase64)
             if (encryptedBase64.isEmpty()) return@withContext null
 
-            return@withContext googleDriveManager.pushSyncBlob(encryptedBase64, partnerEmail)
+            val result = googleDriveManager.pushSyncBlob(encryptedBase64, partnerEmail)
+            if (result != null) _syncStatusMessage.value = null // Clear any previous storage warning
+            return@withContext result
             } finally {
                 encryptionKeyBytes.fill(0)
             }
+        } catch (e: DriveStorageFullException) {
+            val usedGB = String.format("%.1f", e.usedBytes / 1_073_741_824.0)
+            val limitGB = String.format("%.1f", e.limitBytes / 1_073_741_824.0)
+            _syncStatusMessage.value = "Google Drive storage full ($usedGB GB / $limitGB GB). Sync paused until space is freed."
+            return@withContext null
         } catch (e: Exception) {
             return@withContext null
         }
@@ -135,6 +148,12 @@ class SyncManager(
         if (!checkRateLimit()) return@withLock false
         withContext(Dispatchers.IO) {
             val partnerFileId = storage.getTargetSyncId()
+            val isOwner = storage.getUserId() != null && partnerFileId.isNullOrEmpty()
+            val hasLocalEntries = database.cycleQueries.selectAllEntries().executeAsList().isNotEmpty()
+
+            if (isOwner && hasLocalEntries) {
+                return@withContext prepareAndUploadPayload() != null
+            }
             
             val encryptedBase64 = if (partnerFileId != null && partnerFileId.isNotEmpty() && partnerFileId != "appDataFolder") {
                 // Partner downloading public link
@@ -146,11 +165,17 @@ class SyncManager(
             if (encryptedBase64.isNullOrEmpty() || encryptedBase64 == "REVOKED") {
                 return@withContext true
             }
-            importEncryptedSyncPayload(encryptedBase64)
+            importEncryptedSyncPayloadInternal(encryptedBase64)
         }
     }
 
-    fun importEncryptedSyncPayload(encryptedBase64: String): Boolean {
+    suspend fun importEncryptedSyncPayload(encryptedBase64: String): Boolean = uploadMutex.withLock {
+        withContext(Dispatchers.IO) {
+            importEncryptedSyncPayloadInternal(encryptedBase64)
+        }
+    }
+
+    private fun importEncryptedSyncPayloadInternal(encryptedBase64: String): Boolean {
         if (encryptedBase64.length > 2 * 1024 * 1024) {
             return false
         }
@@ -167,9 +192,17 @@ class SyncManager(
         }
 
         return try {
-            val payload = AppJson.decodeFromString<SyncPayload>(rawJson)
+            val payload = try {
+                AppJson.decodeFromString<SyncPayload>(rawJson)
+            } catch (t: Throwable) {
+                return false
+            }
             val lastTs = storage.getLastSyncTimestamp()
             if (payload.lastUpdated <= 0L || (lastTs > 0L && payload.lastUpdated < lastTs)) {
+                return false
+            }
+            val now = Clock.System.now().toEpochMilliseconds()
+            if (payload.lastUpdated > now + 86_400_000L) {
                 return false
             }
             if (payload.entries.size > 5000 || payload.pregnancyTests.size > 1000 || payload.reminders.size > 100) {
@@ -177,9 +210,55 @@ class SyncManager(
             }
             val dateRegex = Regex("^\\d{4}-\\d{2}-\\d{2}$")
             
+            data class ValidatedEntry(
+                val date: String,
+                val intensity: Int,
+                val notes: String?,
+                val sexualRelations: String?,
+                val painLevel: Int?,
+                val symptoms: String?
+            )
+            data class ValidatedPregnancyTest(
+                val date: String,
+                val result: String
+            )
+            data class ValidatedReminder(
+                val type: String,
+                val frequency: String,
+                val timeOfDay: String?,
+                val nextDate: String?,
+                val isActive: Boolean
+            )
+
+            val validatedEntries = payload.entries.mapNotNull { entry ->
+                if (dateRegex.matches(entry.date)) {
+                    val validIntensity = entry.intensity.coerceIn(0, 5)
+                    val validPainLevel = entry.painLevel?.coerceIn(0, 10)
+                    val cleanNotes = entry.notes?.replace(Regex("<[^>]*>"), "")?.take(500)?.trim()
+                    val cleanSymptoms = entry.symptoms?.replace(Regex("<[^>]*>"), "")?.take(200)?.trim()
+                    ValidatedEntry(entry.date, validIntensity, cleanNotes, entry.sexualRelations?.take(50), validPainLevel, cleanSymptoms)
+                } else null
+            }
+            if (validatedEntries.size != payload.entries.size) {
+                return false
+            }
+
+            val validatedTests = payload.pregnancyTests.mapNotNull { pt ->
+                if (dateRegex.matches(pt.date)) {
+                    ValidatedPregnancyTest(pt.date, pt.result.take(100))
+                } else null
+            }
+            if (validatedTests.size != payload.pregnancyTests.size) {
+                return false
+            }
+
+            val validatedReminders = payload.reminders.map { rm ->
+                val validNext = if (rm.nextDate != null && dateRegex.matches(rm.nextDate)) rm.nextDate else null
+                ValidatedReminder(rm.type.take(50), rm.frequency.take(50), rm.timeOfDay?.take(50), validNext, rm.isActive)
+            }
+            
             database.transaction {
-                android.util.Log.e("BLOOM_DIAG", "!!! deleteAllEntries CALLED FROM SYNC IMPORT !!!")
-                Thread.currentThread().stackTrace.take(10).forEach { android.util.Log.e("BLOOM_DIAG", "  at $it") }
+
                 queries.deleteAllEntries()
                 queries.deleteAllPregnancyTests()
                 queries.deleteAllReminders()
@@ -188,25 +267,16 @@ class SyncManager(
                     queries.setBirthControl(it.type.take(50))
                 }
                 
-                payload.entries.forEach { entry ->
-                    if (dateRegex.matches(entry.date)) {
-                        val validIntensity = entry.intensity.coerceIn(0, 5)
-                        val validPainLevel = entry.painLevel?.coerceIn(1, 10)
-                        val cleanNotes = entry.notes?.replace(Regex("<[^>]*>"), "")?.take(500)?.trim()
-                        val cleanSymptoms = entry.symptoms?.replace(Regex("<[^>]*>"), "")?.take(200)?.trim()
-                        queries.insertEntry(entry.date, validIntensity, cleanNotes, entry.sexualRelations?.take(50), validPainLevel, cleanSymptoms)
-                    }
+                validatedEntries.forEach { entry ->
+                    queries.insertEntry(entry.date, entry.intensity, entry.notes, entry.sexualRelations, entry.painLevel, entry.symptoms)
                 }
                 
-                payload.pregnancyTests.forEach { pt ->
-                    if (dateRegex.matches(pt.date)) {
-                        queries.insertPregnancyTest(pt.date, pt.result.take(100))
-                    }
+                validatedTests.forEach { pt ->
+                    queries.insertPregnancyTest(pt.date, pt.result)
                 }
                 
-                payload.reminders.forEach { rm ->
-                    val validNext = if (rm.nextDate != null && dateRegex.matches(rm.nextDate)) rm.nextDate else null
-                    queries.insertReminder(rm.type.take(50), rm.frequency.take(50), rm.timeOfDay?.take(50), validNext, rm.isActive)
+                validatedReminders.forEach { rm ->
+                    queries.insertReminder(rm.type, rm.frequency, rm.timeOfDay, rm.nextDate, rm.isActive)
                 }
             }
             
@@ -259,7 +329,7 @@ class SyncManager(
             
             return@withContext true
         } catch (e: Exception) {
-            e.printStackTrace()
+
             return@withContext false
         }
     }

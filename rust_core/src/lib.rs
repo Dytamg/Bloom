@@ -5,10 +5,14 @@ use jni::objects::{JClass, JString, JByteArray};
 use jni::sys::{jboolean, jbyteArray, jstring};
 use jni::JNIEnv;
 use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
 };
+use password_hash::{
+    PasswordHasher, PasswordVerifier,
+    phc::PasswordHash,
+};
 use lazy_static::lazy_static;
+use rand_core::OsRng;
 use std::sync::Mutex;
 use zeroize::{Zeroize, Zeroizing};
 use serde::{Deserialize, Serialize};
@@ -100,13 +104,14 @@ pub fn calculate_phase_internal(last_period_date: &str, avg_cycle_length: i32, t
     if days_since_start < 0 {
         "Upcoming".to_string()
     } else {
-        let current_day_in_cycle = days_since_start % avg_cycle_length as i64;
-        
+        let avg_len = std::cmp::max(21, avg_cycle_length) as i64;
+        let current_day_in_cycle = days_since_start % avg_len;
+        let ovulation_center = std::cmp::max(7, avg_len - 14); // 14 for 28-day cycle
         if current_day_in_cycle < 5 {
             "Menstrual".to_string()
-        } else if current_day_in_cycle < 13 {
+        } else if current_day_in_cycle < ovulation_center - 1 {
             "Follicular".to_string()
-        } else if current_day_in_cycle < 15 {
+        } else if current_day_in_cycle <= ovulation_center {
             "Ovulation".to_string()
         } else {
             "Luteal".to_string()
@@ -136,18 +141,27 @@ pub fn analyze_cycle_history_internal(dates_csv: &str) -> String {
 
     let mut dates: Vec<NaiveDate> = dates_csv
         .split(',')
-        .filter_map(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+        .filter_map(|s| NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").ok())
         .collect();
 
-    dates.sort();
-    
-    if dates.len() < 2 {
+    if dates.is_empty() {
         return serde_json::to_string(&default_result).unwrap_or_else(|_| "{}".to_string());
     }
 
-    let mut intervals = Vec::new();
+    dates.sort();
+    dates.dedup();
+    
+    let mut cycle_starts = Vec::new();
+    cycle_starts.push(dates[0]);
     for i in 1..dates.len() {
-        let diff = (dates[i] - dates[i-1]).num_days();
+        if (dates[i] - dates[i-1]).num_days() > 7 {
+            cycle_starts.push(dates[i]);
+        }
+    }
+
+    let mut intervals = Vec::new();
+    for i in 1..cycle_starts.len() {
+        let diff = (cycle_starts[i] - cycle_starts[i-1]).num_days();
         if diff > 15 && diff < 90 {
             intervals.push(diff as u32);
         }
@@ -159,10 +173,9 @@ pub fn analyze_cycle_history_internal(dates_csv: &str) -> String {
 
 // Authentication Internal Logic
 pub fn generate_pin_hash_internal(pin: &str) -> Vec<u8> {
-    let salt = SaltString::generate(&mut OsRng);
     let params = argon2::Params::new(65536, 3, 4, Some(32)).unwrap_or_else(|_| argon2::Params::default());
     let argon2 = Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
-    match argon2.hash_password(pin.as_bytes(), &salt) {
+    match argon2.hash_password(pin.as_bytes()) {
         Ok(hash) => hash.to_string().into_bytes(),
         Err(_) => vec![],
     }
@@ -244,12 +257,12 @@ pub fn encrypt_data(data: &str, id: &str, secret_key: &[u8]) -> Vec<u8> {
     let mut key_bytes = [0u8; 32];
     hasher.finalize_xof().fill(&mut key_bytes);
     
-    let cipher = XChaCha20Poly1305::new(&key_bytes.into());
+    let cipher = XChaCha20Poly1305::new((&key_bytes).into());
     key_bytes.zeroize(); // VULN-08 FIX: Zeroize ephemeral key material
     
     let mut nonce_bytes = [0u8; 24];
     rand_core::RngCore::fill_bytes(&mut rng, &mut nonce_bytes);
-    let nonce = XNonce::from_slice(&nonce_bytes);
+    let nonce: &XNonce = (&nonce_bytes).into();
 
     let mut ciphertext = match cipher.encrypt(nonce, data.as_bytes()) {
         Ok(ct) => ct,
@@ -285,9 +298,9 @@ pub fn decrypt_payload_internal(encrypted_data: &[u8], id: &str, secret_key: &[u
     let mut key_bytes = [0u8; 32];
     hasher.finalize_xof().fill(&mut key_bytes);
     
-    let cipher = XChaCha20Poly1305::new(&key_bytes.into());
+    let cipher = XChaCha20Poly1305::new((&key_bytes).into());
     key_bytes.zeroize(); // VULN-08 FIX: Zeroize ephemeral key material
-    let nonce = XNonce::from_slice(nonce_bytes);
+    let nonce: &XNonce = nonce_bytes.try_into().ok()?;
 
     let plaintext = cipher.decrypt(nonce, ciphertext).ok()?;
     String::from_utf8(plaintext).ok()
@@ -329,6 +342,14 @@ pub fn generate_filtered_payload_internal(
             if !perms.share_sexual_activity {
                 entry.sexual_relations = None;
             }
+            if !perms.share_pregnancy_tests {
+                if let Some(ref n) = entry.notes {
+                    let lower = n.to_lowercase();
+                    if lower.contains("pregnan") || lower.contains("hcg") || lower.contains("positive") || lower.contains("negative") {
+                        entry.notes = None;
+                    }
+                }
+            }
         }
     }
 
@@ -344,11 +365,11 @@ pub fn generate_filtered_payload_internal(
     encrypt_data(&raw_json, partner_id, &secret_key)
 }
 
-pub fn generate_random_key_internal() -> Vec<u8> {
+pub fn generate_random_key_internal() -> Zeroizing<Vec<u8>> {
     let mut key = [0u8; 32];
     let mut rng = OsRng;
     rand_core::RngCore::fill_bytes(&mut rng, &mut key);
-    let vec = key.to_vec();
+    let vec = Zeroizing::new(key.to_vec());
     key.zeroize();
     vec
 }
@@ -549,7 +570,7 @@ pub extern "system" fn Java_com_novarytm_ffi_RustBridge_generate_1filtered_1payl
         };
         let entries_str: String = match env.get_string(&entries_json) { Ok(s) => s.into(), Err(_) => "".to_string() };
         let id_str: String = match env.get_string(&partner_id) { Ok(s) => s.into(), Err(_) => "".to_string() };
-        let key_str: String = match env.get_string(&shared_key_base64) { Ok(s) => s.into(), Err(_) => "".to_string() };
+        let key_str = Zeroizing::new(match env.get_string(&shared_key_base64) { Ok(s) => s.into(), Err(_) => "".to_string() });
         let result = generate_filtered_payload_internal(last_updated, bc_str, entries_str, &id_str, &key_str);
         match env.byte_array_from_slice(&result) {
             Ok(arr) => arr.into_raw(),
@@ -569,9 +590,9 @@ pub extern "system" fn Java_com_novarytm_ffi_RustBridge_decrypt_1payload(
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let data_bytes = env.convert_byte_array(&encrypted_data).unwrap_or_default();
         let id_str: String = match env.get_string(&partner_id) { Ok(s) => s.into(), Err(_) => "".to_string() };
-        let key_str: String = match env.get_string(&shared_key_base64) { Ok(s) => s.into(), Err(_) => "".to_string() };
+        let key_str = Zeroizing::new(match env.get_string(&shared_key_base64) { Ok(s) => s.into(), Err(_) => "".to_string() });
         use base64::{Engine as _, engine::general_purpose};
-        let secret_key = Zeroizing::new(general_purpose::STANDARD.decode(key_str).unwrap_or_default());
+        let secret_key = Zeroizing::new(general_purpose::STANDARD.decode(&*key_str).unwrap_or_default());
         let result = decrypt_payload_internal(&data_bytes, &id_str, &secret_key).unwrap_or_default();
         match env.new_string(result) {
             Ok(s) => s.into_raw(),
@@ -607,6 +628,86 @@ mod tests {
         assert_eq!(calculate_phase_internal("2023-12-27", 28, today), "Luteal");
         assert_eq!(calculate_phase_internal("2024-01-20", 28, today), "Upcoming");
     }
+
+    #[test]
+    fn test_phase_logic_dynamic_cycles() {
+        let today = NaiveDate::from_ymd_opt(2024, 2, 1).unwrap();
+        // 35-day cycle: start = 2024-01-01 (day 31) -> Luteal
+        assert_eq!(calculate_phase_internal("2024-01-01", 35, today), "Luteal");
+        // Ovulation center for 35 days = 35 - 14 = 21. Day 20 or 21:
+        // Today - 21 days = 2024-01-11
+        assert_eq!(calculate_phase_internal("2024-01-11", 35, today), "Ovulation");
+        // Follicular: Day 10 (today - 10 = 2024-01-22)
+        assert_eq!(calculate_phase_internal("2024-01-22", 35, today), "Follicular");
+        // Menstrual: Day 2 (today - 2 = 2024-01-30)
+        assert_eq!(calculate_phase_internal("2024-01-30", 35, today), "Menstrual");
+    }
+
+    #[test]
+    fn test_analyze_history_cycle_start_grouping() {
+        // Pass individual bleeding dates instead of pre-grouped cycle starts
+        let dates_csv = "2024-01-01,2024-01-02,2024-01-03,2024-01-29,2024-01-30,2024-01-31,2024-02-26,2024-02-27";
+        let res_json = analyze_cycle_history_internal(dates_csv);
+        let pred: prediction_engine::CyclePrediction = serde_json::from_str(&res_json).unwrap();
+        assert_eq!(pred.estimated_length_days, 28);
+        assert!(!pred.is_irregular);
+    }
+
+    #[test]
+    fn test_responsive_1_2_cycle_history() {
+        let one_cycle = vec![30];
+        let p1 = prediction_engine::predict_irregular_cycle(&one_cycle);
+        assert_eq!(p1.estimated_length_days, 30);
+        assert!(!p1.is_irregular);
+
+        let two_regular = vec![28, 30];
+        let p2 = prediction_engine::predict_irregular_cycle(&two_regular);
+        assert_eq!(p2.estimated_length_days, 29);
+        assert!(!p2.is_irregular);
+
+        let two_irregular = vec![24, 34];
+        let p3 = prediction_engine::predict_irregular_cycle(&two_irregular);
+        assert_eq!(p3.estimated_length_days, 29);
+        assert!(p3.is_irregular);
+    }
+
+    #[test]
+    fn test_dedup_and_gap_handling_in_next_cycle() {
+        let history = serde_json::json!([
+            {"date": "2024-01-01", "intensity": 2, "notes": null},
+            {"date": "2024-01-01", "intensity": 3, "notes": null}, // Duplicate date
+            {"date": "2024-01-03", "intensity": 2, "notes": null}, // 2-day gap
+            {"date": "2024-01-05", "intensity": 1, "notes": null}, // 2-day gap
+            {"date": "2024-01-29", "intensity": 3, "notes": null}, // New cycle (>7 days)
+            {"date": "2024-01-30", "intensity": 2, "notes": null}
+        ]).to_string();
+
+        let result = calculate_next_cycle_native_internal(&history);
+        assert!(result.contains("expectedPeriodDays"));
+    }
+
+    #[test]
+    fn test_pregnancy_test_redaction() {
+        let perms = PartnerPermissions {
+            share_cycle_phase: true,
+            share_flow_intensity: true,
+            share_symptoms_moods: true,
+            share_birth_control: true,
+            share_pregnancy_tests: false,
+            share_sexual_activity: true,
+        };
+        save_partner_permissions_internal(perms);
+        let entries_json = serde_json::json!([
+            {"date": "2024-01-01", "intensity": 2, "notes": "Took a pregnancy test, positive hCG", "sexual_relations": null, "pain_level": null, "symptoms": null}
+        ]).to_string();
+        let key_bytes = [1u8; 32];
+        use base64::{Engine as _, engine::general_purpose};
+        let key_b64 = general_purpose::STANDARD.encode(key_bytes);
+        let payload = generate_filtered_payload_internal(100, None, entries_json, "partner1", &key_b64);
+        let decrypted = decrypt_payload_internal(&payload, "partner1", &key_bytes).unwrap();
+        assert!(!decrypted.contains("pregnancy"));
+        assert!(!decrypted.contains("positive"));
+    }
 }
 
 use serde_json::json;
@@ -620,6 +721,7 @@ pub fn calculate_next_cycle_native_internal(history_json: &str) -> String {
         .collect();
 
     dates.sort();
+    dates.dedup();
     
     let empty_vec: Vec<String> = Vec::new();
     let default_response = json!({
@@ -632,11 +734,13 @@ pub fn calculate_next_cycle_native_internal(history_json: &str) -> String {
         return default_response.to_string();
     }
 
-    // Group dates into distinct cycle starts (gap > 15 days)
+    // Group dates into distinct cycle starts (gap > 7 days = new cycle)
+    // A typical period lasts 3-7 days, so any gap larger than 7 between
+    // consecutive logged dates means a new menstrual cycle has started.
     let mut cycle_starts = Vec::new();
     cycle_starts.push(dates[0]);
     for i in 1..dates.len() {
-        if (dates[i] - dates[i-1]).num_days() > 15 {
+        if (dates[i] - dates[i-1]).num_days() > 7 {
             cycle_starts.push(dates[i]);
         }
     }
@@ -648,7 +752,6 @@ pub fn calculate_next_cycle_native_internal(history_json: &str) -> String {
     };
     let today = chrono::Local::now().date_naive();
     let days_since_start = (today - last_period_start).num_days() as i32;
-    let current_day_of_cycle = std::cmp::max(1, days_since_start + 1);
 
     let dates_csv = cycle_starts.iter().map(|d| d.format("%Y-%m-%d").to_string()).collect::<Vec<String>>().join(",");
     let analysis_json = analyze_cycle_history_internal(&dates_csv);
@@ -658,13 +761,14 @@ pub fn calculate_next_cycle_native_internal(history_json: &str) -> String {
     );
     
 
-    // Calculate average period duration (consecutive dates)
-    let mut period_durations = Vec::new();
-    let mut current_duration = 1;
+    // Calculate average period duration (consecutive dates with 1-3 day gaps)
+    let mut period_durations: Vec<i32> = Vec::new();
+    let mut current_duration: i32 = 1;
     for i in 1..dates.len() {
-        if (dates[i] - dates[i-1]).num_days() == 1 {
-            current_duration += 1;
-        } else if (dates[i] - dates[i-1]).num_days() > 15 {
+        let diff = (dates[i] - dates[i-1]).num_days() as i32;
+        if diff >= 1 && diff <= 3 {
+            current_duration += diff;
+        } else if diff > 7 {
             period_durations.push(current_duration);
             current_duration = 1;
         }
@@ -673,12 +777,21 @@ pub fn calculate_next_cycle_native_internal(history_json: &str) -> String {
     
     let avg_period_duration = if !period_durations.is_empty() {
         let sum: i32 = period_durations.iter().sum();
-        std::cmp::max(3, sum / (period_durations.len() as i32))
+        (sum / (period_durations.len() as i32)).clamp(3, 14)
     } else {
         5
     };
 
     let avg_length = analysis.estimated_length_days as i64;
+
+    // Wrap the cycle day counter using the estimated cycle length so it
+    // resets at the boundary instead of counting up forever (fixes "73 of 28").
+    let raw_day = std::cmp::max(0, days_since_start) as i64;
+    let current_day_of_cycle = if avg_length > 0 {
+        ((raw_day % avg_length) + 1) as i32
+    } else {
+        1
+    };
 
     
     let mut expected_period_days = Vec::new();
@@ -708,13 +821,13 @@ pub fn calculate_next_cycle_native_internal(history_json: &str) -> String {
 
     // 2. Predict future cycles from the current cycle forward
     for cycle_idx in 1..=3 {
-        let cycle_start = last_period_start + chrono::Duration::days(avg_length * cycle_idx);
+        let cycle_start = last_period_start + chrono::Duration::days(avg_length.saturating_mul(cycle_idx));
         
         for i in 0..avg_period_duration {
             expected_period_days.push((cycle_start + chrono::Duration::days(i as i64)).format("%Y-%m-%d").to_string());
         }
 
-        let next_cycle_start = last_period_start + chrono::Duration::days(avg_length * (cycle_idx + 1));
+        let next_cycle_start = last_period_start + chrono::Duration::days(avg_length.saturating_mul(cycle_idx + 1));
         let ovulation_day = next_cycle_start - chrono::Duration::days(14);
         
         for i in -2..=2 {
@@ -757,16 +870,18 @@ pub extern "system" fn Java_com_novarytm_ffi_RustBridge_calculateNextCycleNative
 
 pub fn encrypt_for_sync_internal(payload: &str, shared_key_base64: &str) -> Option<String> {
     use base64::{Engine as _, engine::general_purpose};
-    let mut key_bytes = general_purpose::STANDARD.decode(shared_key_base64).ok()?;
-    if key_bytes.len() != 32 { return None; }
+    let key_vec = Zeroizing::new(general_purpose::STANDARD.decode(shared_key_base64).ok()?);
+    if key_vec.len() != 32 { return None; }
+    let mut key_arr = [0u8; 32];
+    key_arr.copy_from_slice(&key_vec);
     
-    let cipher = XChaCha20Poly1305::new(chacha20poly1305::Key::from_slice(&key_bytes));
-    key_bytes.zeroize(); // VULN-08 FIX: Zeroize ephemeral key material
+    let cipher = XChaCha20Poly1305::new((&key_arr).into());
+    key_arr.zeroize();
     
     let mut nonce_bytes = [0u8; 24];
     let mut rng = rand_core::OsRng;
     rand_core::RngCore::fill_bytes(&mut rng, &mut nonce_bytes);
-    let nonce = XNonce::from_slice(&nonce_bytes);
+    let nonce: &XNonce = (&nonce_bytes).into();
 
     let mut ciphertext = cipher.encrypt(nonce, payload.as_bytes()).ok()?;
     
@@ -779,8 +894,10 @@ pub fn encrypt_for_sync_internal(payload: &str, shared_key_base64: &str) -> Opti
 
 pub fn decrypt_from_sync_internal(encrypted_base64: &str, shared_key_base64: &str) -> Option<String> {
     use base64::{Engine as _, engine::general_purpose};
-    let mut key_bytes = general_purpose::STANDARD.decode(shared_key_base64).ok()?;
-    if key_bytes.len() != 32 { return None; }
+    let key_vec = Zeroizing::new(general_purpose::STANDARD.decode(shared_key_base64).ok()?);
+    if key_vec.len() != 32 { return None; }
+    let mut key_arr = [0u8; 32];
+    key_arr.copy_from_slice(&key_vec);
     
     let encrypted_data = general_purpose::STANDARD.decode(encrypted_base64).ok()?;
     if encrypted_data.len() < 24 { return None; }
@@ -788,9 +905,9 @@ pub fn decrypt_from_sync_internal(encrypted_base64: &str, shared_key_base64: &st
     let nonce_bytes = &encrypted_data[0..24];
     let ciphertext = &encrypted_data[24..];
     
-    let cipher = XChaCha20Poly1305::new(chacha20poly1305::Key::from_slice(&key_bytes));
-    key_bytes.zeroize(); // VULN-08 FIX: Zeroize ephemeral key material
-    let nonce = XNonce::from_slice(nonce_bytes);
+    let cipher = XChaCha20Poly1305::new((&key_arr).into());
+    key_arr.zeroize();
+    let nonce: &XNonce = nonce_bytes.try_into().ok()?;
 
     let plaintext = cipher.decrypt(nonce, ciphertext).ok()?;
     String::from_utf8(plaintext).ok()
@@ -805,7 +922,7 @@ pub extern "system" fn Java_com_novarytm_ffi_RustBridge_encrypt_1for_1sync(
 ) -> jstring {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let payload: String = match env.get_string(&payload_json) { Ok(s) => s.into(), Err(_) => "".to_string() };
-        let key: String = match env.get_string(&shared_key_base64) { Ok(s) => s.into(), Err(_) => "".to_string() };
+        let key = Zeroizing::new(match env.get_string(&shared_key_base64) { Ok(s) => s.into(), Err(_) => "".to_string() });
         
         let result = encrypt_for_sync_internal(&payload, &key).unwrap_or_default();
         match env.new_string(result) {
@@ -827,7 +944,7 @@ pub extern "system" fn Java_com_novarytm_ffi_RustBridge_decrypt_1from_1sync(
 ) -> jstring {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let encrypted: String = match env.get_string(&encrypted_base64) { Ok(s) => s.into(), Err(_) => "".to_string() };
-        let key: String = match env.get_string(&shared_key_base64) { Ok(s) => s.into(), Err(_) => "".to_string() };
+        let key = Zeroizing::new(match env.get_string(&shared_key_base64) { Ok(s) => s.into(), Err(_) => "".to_string() });
         
         let result = decrypt_from_sync_internal(&encrypted, &key).unwrap_or_default();
         match env.new_string(result) {

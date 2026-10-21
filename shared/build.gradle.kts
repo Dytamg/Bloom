@@ -78,8 +78,8 @@ kotlin {
             api("androidx.appcompat:appcompat:1.6.1")
             api("androidx.core:core-ktx:1.13.0")
             api("androidx.graphics:graphics-path:1.0.1")
-            api("androidx.biometric:biometric:1.2.0-alpha05")
-            api("androidx.security:security-crypto:1.1.0-alpha06")
+            api("androidx.biometric:biometric:1.1.0")
+            api("androidx.security:security-crypto:1.1.0")
             implementation("androidx.lifecycle:lifecycle-runtime-compose:2.10.0")
             implementation("io.ktor:ktor-client-android:3.5.0")
             

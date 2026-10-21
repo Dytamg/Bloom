@@ -31,7 +31,11 @@ actual class RustBridge {
     }
 
     actual fun unlockWithBiometric(keyBytes: ByteArray): Boolean {
-        return true // Mock
+        try {
+            return true // Mock
+        } finally {
+            keyBytes.fill(0)
+        }
     }
 
     actual fun lockDatabase() {

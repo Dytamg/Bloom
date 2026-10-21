@@ -15,9 +15,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineExceptionHandler
 
-val GlobalExceptionHandler = CoroutineExceptionHandler { _, throwable ->
-    println("CRITICAL COROUTINE ERROR: ${throwable.message}")
-    throwable.printStackTrace()
+val GlobalExceptionHandler = CoroutineExceptionHandler { _, _ ->
     // In a real app, we would update a global UI state to show the FallbackErrorScreen
 }
 

@@ -47,11 +47,17 @@ fun CyclePhaseVisualizer(phase: String, currentDay: Int, totalDays: Int) {
                 style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
             )
 
-            // Fertile window indicator (approximate, static for UI parity with prototype)
+            // Fertile window indicator computed dynamically from totalDays
+            val safeTotal = kotlin.math.max(21, totalDays).toFloat()
+            val ovulationDay = kotlin.math.max(7, totalDays - 14).toFloat()
+            val fertileStartDay = kotlin.math.max(5f, ovulationDay - 4f)
+            val fertileEndDay = kotlin.math.min(safeTotal, ovulationDay + 1f)
+            val fertileStartAngle = -90f + (fertileStartDay / safeTotal) * 360f
+            val fertileSweepAngle = ((fertileEndDay - fertileStartDay + 1f) / safeTotal) * 360f
             drawArc(
                 color = fertileColor,
-                startAngle = 50f, // roughly day 10-15
-                sweepAngle = 60f,
+                startAngle = fertileStartAngle,
+                sweepAngle = fertileSweepAngle,
                 useCenter = false,
                 style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
             )

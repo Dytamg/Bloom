@@ -27,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.SecureFlagPolicy
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import com.novarytm.db.CycleQueries
 import com.novarytm.notifications.NotificationScheduler
@@ -355,7 +356,7 @@ fun BirthControlTab(
         }
 
         if (showMethodSelector) {
-            Dialog(onDismissRequest = { showMethodSelector = false }) {
+            Dialog(onDismissRequest = { showMethodSelector = false }, properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn)) {
                 Card(
                     shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(containerColor = Color.White)
@@ -476,7 +477,7 @@ fun QuizOverlay(onClose: () -> Unit, onComplete: (BCOption) -> Unit, primaryColo
         } else emptyList()
     }
     
-    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, securePolicy = SecureFlagPolicy.SecureOn)) {
         Box(modifier = Modifier.fillMaxSize().background(Color.White), contentAlignment = Alignment.Center) {
             IconButton(onClick = onClose, modifier = Modifier.align(Alignment.TopEnd).padding(16.dp).background(Color.LightGray.copy(alpha=0.2f), CircleShape)) {
                 Icon(Icons.Default.Close, contentDescription = null)
@@ -726,6 +727,7 @@ fun ReminderSection(
             )
             DatePickerDialog(
                 onDismissRequest = { showDatePicker = false },
+                properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
                 colors = DatePickerDefaults.colors(containerColor = LocalAppColors.current.surface),
                 confirmButton = {
                     TextButton(onClick = {
@@ -755,6 +757,7 @@ fun ReminderSection(
             val timePickerState = rememberTimePickerState(initialHour = 9, initialMinute = 0)
             AlertDialog(
                 onDismissRequest = { showTimePicker = false },
+                properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
                 containerColor = LocalAppColors.current.surface,
                 title = { Text("Select Time") },
                 text = {
@@ -781,6 +784,7 @@ fun ReminderSection(
 
         AlertDialog(
             onDismissRequest = { showSetup = false },
+            properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
             containerColor = LocalAppColors.current.surface,
             title = { Text("Setup Reminder") },
             text = {
@@ -877,7 +881,7 @@ fun ReminderSection(
                         isInjection -> {
                             val nextDate = selectedDate.plus(84, DateTimeUnit.DAY)
                             queries.insertReminder("Contraceptive Injection", "Every 12 Weeks", selectedTimeStr, nextDate.toString(), true)
-                            notificationScheduler.scheduleNotification(106, "Bloom", "🌸 Time for your next shot", delayFor(nextDate))
+                            notificationScheduler.scheduleNotification(107, "Bloom", "🌸 Time for your next shot", delayFor(nextDate))
                         }
                     }
                     showSetup = false
@@ -961,6 +965,7 @@ fun PregnancyTestTab(
             )
             DatePickerDialog(
                 onDismissRequest = { showDatePicker = false },
+                properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
                 colors = DatePickerDefaults.colors(containerColor = LocalAppColors.current.surface),
                 confirmButton = {
                     TextButton(onClick = {
@@ -988,6 +993,7 @@ fun PregnancyTestTab(
 
         AlertDialog(
             onDismissRequest = { showLogDialog = false },
+            properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
             containerColor = LocalAppColors.current.surface,
             title = { Text("Log Pregnancy Test") },
             text = {
@@ -1043,6 +1049,7 @@ fun PregnancyTestTab(
             )
             DatePickerDialog(
                 onDismissRequest = { showDatePicker = false },
+                properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
                 colors = DatePickerDefaults.colors(containerColor = LocalAppColors.current.surface),
                 confirmButton = {
                     TextButton(onClick = {
@@ -1072,6 +1079,7 @@ fun PregnancyTestTab(
             val timePickerState = rememberTimePickerState(initialHour = 10, initialMinute = 0)
             AlertDialog(
                 onDismissRequest = { showTimePicker = false },
+                properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
                 containerColor = LocalAppColors.current.surface,
                 title = { Text("Select Time") },
                 text = {
@@ -1098,6 +1106,7 @@ fun PregnancyTestTab(
 
         AlertDialog(
             onDismissRequest = { showReminderDialog = false },
+            properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
             containerColor = LocalAppColors.current.surface,
             title = { Text("Monthly Reminder") },
             text = {
@@ -1142,7 +1151,7 @@ fun PregnancyTestTab(
                     }
                     val recurringDelay = (LocalDateTime(firstOccurrence, targetTime).toInstant(tz).toEpochMilliseconds() - now.toEpochMilliseconds()).coerceAtLeast(1000L)
                     
-                    notificationScheduler.scheduleNotification(103, "Bloom", "🌸 Time for a quick check-in", recurringDelay)
+                    notificationScheduler.scheduleNotification(108, "Bloom", "🌸 Time for a quick check-in", recurringDelay)
                     showReminderDialog = false
                 }) { Text("Yes, Remind Me", color = primaryColor) }
             },

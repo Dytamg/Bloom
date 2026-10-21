@@ -56,7 +56,15 @@ object AppStrings {
         "retry_sign_in" to "Réessayer la connexion",
         "failed_upload" to "Échec du téléchargement sur Google Drive. Veuillez réessayer.",
         "auth_cancelled" to "La connexion Google a été annulée ou les autorisations Drive refusées.",
-        "signing_in" to "Connexion et téléchargement..."
+        "signing_in" to "Connexion et téléchargement...",
+        "connect_title" to "Se connecter avec un partenaire",
+        "enter_details" to "Entrez les détails du partenaire",
+        "paste_code_instruction" to "Collez le code de synchronisation de 5 minutes fourni par votre partenaire.",
+        "sync_code_field" to "Code de synchronisation",
+        "connect_button" to "Se connecter et définir le code PIN",
+        "expired_code" to "Ce code de synchronisation a expiré. Veuillez demander à votre partenaire d'en générer un nouveau.",
+        "invalid_format" to "Format de code non valide.",
+        "invalid_code" to "Code de synchronisation non valide."
     )
 
     private val pt = mapOf(
@@ -70,7 +78,15 @@ object AppStrings {
         "retry_sign_in" to "Tentar novamente o login",
         "failed_upload" to "Falha ao enviar backup para o Google Drive. Tente novamente.",
         "auth_cancelled" to "O Login do Google foi cancelado ou as permissões do Drive não foram concedidas.",
-        "signing_in" to "Entrando e enviando..."
+        "signing_in" to "Entrando e enviando...",
+        "connect_title" to "Conectar com Parceiro",
+        "enter_details" to "Insira os detalhes do parceiro",
+        "paste_code_instruction" to "Cole o código de sincronização de 5 minutos fornecido pelo seu parceiro.",
+        "sync_code_field" to "Código de sincronização",
+        "connect_button" to "Conectar e definir PIN",
+        "expired_code" to "Este código de sincronização expirou. Peça ao seu parceiro para gerar um novo.",
+        "invalid_format" to "Formato de código inválido.",
+        "invalid_code" to "Código de sincronização inválido."
     )
 
     private val de = mapOf(
@@ -84,7 +100,15 @@ object AppStrings {
         "retry_sign_in" to "Anmeldung wiederholen",
         "failed_upload" to "Fehler beim Hochladen auf Google Drive. Bitte versuchen Sie es erneut.",
         "auth_cancelled" to "Die Google-Anmeldung wurde abgebrochen oder Drive-Berechtigungen wurden nicht erteilt.",
-        "signing_in" to "Anmelden und hochladen..."
+        "signing_in" to "Anmelden und hochladen...",
+        "connect_title" to "Mit Partner verbinden",
+        "enter_details" to "Partner-Details eingeben",
+        "paste_code_instruction" to "Fügen Sie den 5-Minuten-Synchronisierungscode Ihres Partners ein.",
+        "sync_code_field" to "Synchronisierungscode",
+        "connect_button" to "Verbinden und PIN festlegen",
+        "expired_code" to "Dieser Synchronisierungscode ist abgelaufen. Bitte fordern Sie Ihren Partner auf, einen neuen zu generieren.",
+        "invalid_format" to "Ungültiges Code-Format.",
+        "invalid_code" to "Ungültiger Synchronisierungscode."
     )
 
     private val it = mapOf(
@@ -98,7 +122,15 @@ object AppStrings {
         "retry_sign_in" to "Riprova Accesso",
         "failed_upload" to "Caricamento su Google Drive non riuscito. Riprova.",
         "auth_cancelled" to "Accesso a Google annullato o permessi Drive non concessi.",
-        "signing_in" to "Accesso e caricamento..."
+        "signing_in" to "Accesso e caricamento...",
+        "connect_title" to "Connetti con Partner",
+        "enter_details" to "Inserisci i dettagli del partner",
+        "paste_code_instruction" to "Incolla il codice di sincronizzazione di 5 minuti fornito dal tuo partner.",
+        "sync_code_field" to "Codice di sincronizzazione",
+        "connect_button" to "Connetti e imposta PIN",
+        "expired_code" to "Questo codice di sincronizzazione è scaduto. Chiedi al tuo partner di generarne uno nuovo.",
+        "invalid_format" to "Formato del codice non valido.",
+        "invalid_code" to "Codice di sincronizzazione non valido."
     )
 
     private val ru = mapOf(
@@ -112,7 +144,15 @@ object AppStrings {
         "retry_sign_in" to "Повторить вход",
         "failed_upload" to "Не удалось загрузить резервную копию на Google Drive.",
         "auth_cancelled" to "Вход через Google был отменен, или разрешения Drive не предоставлены.",
-        "signing_in" to "Вход и загрузка..."
+        "signing_in" to "Вход и загрузка...",
+        "connect_title" to "Подключиться к партнеру",
+        "enter_details" to "Введите данные партнера",
+        "paste_code_instruction" to "Вставьте 5-минутный код синхронизации, предоставленный партнером.",
+        "sync_code_field" to "Код синхронизации",
+        "connect_button" to "Подключиться и установить PIN",
+        "expired_code" to "Срок действия этого кода синхронизации истек. Пожалуйста, попросите партнера создать новый.",
+        "invalid_format" to "Неверный формат кода.",
+        "invalid_code" to "Неверный код синхронизации."
     )
 
     private val hi = mapOf(
@@ -126,7 +166,15 @@ object AppStrings {
         "retry_sign_in" to "साइन इन फिर से आज़माएं",
         "failed_upload" to "Google ड्राइव पर अपलोड विफल रहा।",
         "auth_cancelled" to "Google साइन-इन रद्द कर दिया गया या ड्राइव अनुमतियां नहीं दी गईं।",
-        "signing_in" to "साइन इन और अपलोड हो रहा है..."
+        "signing_in" to "साइन इन और अपलोड हो रहा है...",
+        "connect_title" to "पार्टनर से कनेक्ट करें",
+        "enter_details" to "पार्टनर का विवरण दर्ज करें",
+        "paste_code_instruction" to "अपने पार्टनर द्वारा दिया गया 5-मिनट का सिंक कोड पेस्ट करें।",
+        "sync_code_field" to "सिंक कोड",
+        "connect_button" to "कनेक्ट करें और पिन सेट करें",
+        "expired_code" to "यह सिंक कोड समाप्त हो गया है। कृपया अपने पार्टनर से एक नया कोड जनरेट करने के लिए कहें।",
+        "invalid_format" to "अमान्य कोड प्रारूप।",
+        "invalid_code" to "अमान्य सिंक कोड।"
     )
 
     private val ar = mapOf(
@@ -140,7 +188,15 @@ object AppStrings {
         "retry_sign_in" to "إعادة المحاولة",
         "failed_upload" to "فشل التحميل إلى Google Drive. يرجى المحاولة مرة أخرى.",
         "auth_cancelled" to "تم إلغاء تسجيل الدخول إلى Google ، أو لم يتم منح أذونات Drive.",
-        "signing_in" to "جاري تسجيل الدخول والتحميل..."
+        "signing_in" to "جاري تسجيل الدخول والتحميل...",
+        "connect_title" to "الاتصال بالشريك",
+        "enter_details" to "أدخل تفاصيل الشريك",
+        "paste_code_instruction" to "الصق رمز المزامنة لمدة 5 دقائق المقدم من شريكك.",
+        "sync_code_field" to "رمز المزامنة",
+        "connect_button" to "الاتصال وتعيين رمز PIN",
+        "expired_code" to "انتهت صلاحية رمز المزامنة هذا. يرجى أن تطلب من شريكك إنشاء رمز جديد.",
+        "invalid_format" to "تنسيق الرمز غير صالح.",
+        "invalid_code" to "رمز المزامنة غير صالح."
     )
 
     private val ja = mapOf(
@@ -154,7 +210,15 @@ object AppStrings {
         "retry_sign_in" to "ログインを再試行",
         "failed_upload" to "Google Driveへのアップロードに失敗しました。再試行してください。",
         "auth_cancelled" to "Googleログインがキャンセルされたか、Driveの権限が付与されていません。",
-        "signing_in" to "ログインしてアップロード中..."
+        "signing_in" to "ログインしてアップロード中...",
+        "connect_title" to "パートナーと接続",
+        "enter_details" to "パートナーの情報を入力",
+        "paste_code_instruction" to "パートナーから提供された5分間の同期コードを貼り付けてください。",
+        "sync_code_field" to "同期コード",
+        "connect_button" to "接続してPINを設定",
+        "expired_code" to "この同期コードは有効期限が切れています。パートナーに新しいコードの生成を依頼してください。",
+        "invalid_format" to "無効なコード形式です。",
+        "invalid_code" to "無効な同期コードです。"
     )
 
     private val zh = mapOf(
@@ -168,7 +232,15 @@ object AppStrings {
         "retry_sign_in" to "重试登录并上传",
         "failed_upload" to "无法上传备份到Google Drive。请重试。",
         "auth_cancelled" to "Google登录被取消，或未授予Drive权限。",
-        "signing_in" to "正在登录并上传..."
+        "signing_in" to "正在登录并上传...",
+        "connect_title" to "连接伴侣",
+        "enter_details" to "输入伴侣信息",
+        "paste_code_instruction" to "粘贴伴侣提供的5分钟同步代码。",
+        "sync_code_field" to "同步代码",
+        "connect_button" to "连接并设置PIN",
+        "expired_code" to "此同步代码已过期。请让您的伴侣生成一个新代码。",
+        "invalid_format" to "无效的代码格式。",
+        "invalid_code" to "无效的同步代码。"
     )
 
     private val translations = mapOf(

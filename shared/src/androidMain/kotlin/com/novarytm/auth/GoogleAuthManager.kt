@@ -33,7 +33,7 @@ actual class GoogleAuthManager(
         try {
             GoogleAuthUtil.getToken(context, acct, scopeString)
         } catch (e: Exception) {
-            android.util.Log.w("BloomAuth", "getAccessToken failed: ${e.message}", e)
+            android.util.Log.w("BloomAuth", "getAccessToken failed: ${e::class.simpleName}")
             null
         }
     }
@@ -43,7 +43,7 @@ actual class GoogleAuthManager(
             try {
                 GoogleAuthUtil.clearToken(context, token)
             } catch (e: Exception) {
-                e.printStackTrace()
+                // Silently handle token clear failure
             }
         }
     }
@@ -81,7 +81,7 @@ actual fun rememberGoogleAuthManager(storage: SecureStorageManager): GoogleAuthM
             }
         } catch (e: Exception) {
             android.util.Log.e("BloomAuth", "Sign-in task failed", e)
-            pendingContinuation?.resumeWithException(Exception("Sign-in task failed: ${e.message}", e))
+            pendingContinuation?.resumeWithException(Exception("Sign-in task failed", e))
             pendingContinuation = null
         }
     }

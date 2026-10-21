@@ -13,7 +13,7 @@ actual class DriverFactory(private val context: Context) {
         val masterKey = storage.getMasterKey()
         
         val dbFile = context.getDatabasePath("novarytm.db")
-        android.util.Log.i("DriverFactory", "createDriver: getMasterKey()=${if (masterKey != null) "present(${masterKey.size}bytes)" else "NULL"}, dbFile.exists=${dbFile.exists()}, dbFile.length=${if (dbFile.exists()) dbFile.length() else -1}")
+
         
         val effectiveKey: ByteArray = if (masterKey != null) {
             masterKey
@@ -34,7 +34,18 @@ actual class DriverFactory(private val context: Context) {
                     try {
                         val bakFile = File(dbFile.absolutePath + ".bak_" + System.currentTimeMillis())
                         dbFile.renameTo(bakFile)
+                        java.io.File(dbFile.path + "-wal").delete()
+                        java.io.File(dbFile.path + "-shm").delete()
+                        java.io.File(dbFile.path + "-journal").delete()
                     } catch (_: Exception) {}
+                    // Clean up backup files older than 7 days
+                    try {
+                        val dbDir = context.getDatabasePath("novarytm.db").parentFile
+                        dbDir?.listFiles()?.filter {
+                            it.name.startsWith("novarytm.db.bak_") &&
+                            (System.currentTimeMillis() - it.lastModified()) > 7 * 24 * 60 * 60 * 1000L
+                        }?.forEach { it.delete() }
+                    } catch (_: Exception) { }
                 }
                 val newKey = ByteArray(32)
                 java.security.SecureRandom().nextBytes(newKey)
@@ -84,19 +95,19 @@ actual class DriverFactory(private val context: Context) {
         // is handled by our safe callback.
         val safeCallback = object : androidx.sqlite.db.SupportSQLiteOpenHelper.Callback(1) {
             override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
-                android.util.Log.w("BLOOM_DIAG", "SupportSQLiteOpenHelper.onCreate CALLED — creating tables with IF NOT EXISTS")
+
                 db.execSQL("CREATE TABLE IF NOT EXISTS CycleEntry (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL UNIQUE, intensity INTEGER, notes TEXT, sexualRelations TEXT, painLevel INTEGER, symptoms TEXT);")
                 db.execSQL("CREATE TABLE IF NOT EXISTS BirthControl (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, reminderTime TEXT, isActive INTEGER DEFAULT 1);")
                 db.execSQL("CREATE TABLE IF NOT EXISTS PregnancyTest (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL UNIQUE, result TEXT NOT NULL);")
                 db.execSQL("CREATE TABLE IF NOT EXISTS Reminder (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, frequency TEXT NOT NULL, timeOfDay TEXT, nextDate TEXT, isActive INTEGER DEFAULT 1);")
             }
             override fun onUpgrade(db: androidx.sqlite.db.SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {
-                android.util.Log.w("BLOOM_DIAG", "SupportSQLiteOpenHelper.onUpgrade: $oldVersion -> $newVersion")
+
                 // No migrations needed — just ensure tables exist
                 onCreate(db)
             }
             override fun onOpen(db: androidx.sqlite.db.SupportSQLiteDatabase) {
-                android.util.Log.w("BLOOM_DIAG", "SupportSQLiteOpenHelper.onOpen: version=${db.version}")
+
             }
         }
 
@@ -110,38 +121,43 @@ actual class DriverFactory(private val context: Context) {
             )
         }
 
-        // Try opening with the primary factory
-        if (dbFile.exists()) {
-            try {
-                val driver = openDriver(factory)
-                // Verify we can read/write from the database using a valid DDL command (SELECT via driver.execute throws code 0)
-                driver.execute(null, "CREATE TABLE IF NOT EXISTS CycleEntry (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL UNIQUE, intensity INTEGER, notes TEXT, sexualRelations TEXT, painLevel INTEGER, symptoms TEXT);", 0)
-                val walFile = File(dbFile.absolutePath + "-wal")
-                android.util.Log.i("DriverFactory", "Database opened successfully (main=${dbFile.length()}b, wal=${if (walFile.exists()) walFile.length() else -1}b)")
-                return driver
-            } catch (e: Exception) {
-                android.util.Log.e("DriverFactory", "Primary key failed to open database: ${e.message}", e)
+        try {
+            // Try opening with the primary factory
+            if (dbFile.exists()) {
+                try {
+                    val driver = openDriver(factory)
+                    // Verify we can read/write from the database using a valid DDL command (SELECT via driver.execute throws code 0)
+                    driver.execute(null, "CREATE TABLE IF NOT EXISTS CycleEntry (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL UNIQUE, intensity INTEGER, notes TEXT, sexualRelations TEXT, painLevel INTEGER, symptoms TEXT);", 0)
+                    val walFile = File(dbFile.absolutePath + "-wal")
+
+                    return driver
+                } catch (e: Exception) {
+                    android.util.Log.e("DriverFactory", "Primary key failed to open database: ${e.message}", e)
+                }
+            }
+
+            // If primary failed and db exists, archive it
+            if (dbFile.exists()) {
+                android.util.Log.e("DriverFactory", "Database unreadable. Archiving and creating fresh database.")
+                try {
+                    val bakFile = File(dbFile.absolutePath + ".bak_" + System.currentTimeMillis())
+                    dbFile.renameTo(bakFile)
+                } catch (_: Exception) {}
+                try { File(dbFile.absolutePath + "-journal").delete() } catch (_: Exception) {}
+                try { File(dbFile.absolutePath + "-shm").delete() } catch (_: Exception) {}
+                try { File(dbFile.absolutePath + "-wal").delete() } catch (_: Exception) {}
+            }
+
+            // Create fresh database
+
+            val freshPassphrase = buildPassphrase(effectiveKey)
+            val freshFactory = SupportOpenHelperFactory(freshPassphrase)
+            return openDriver(freshFactory)
+        } finally {
+            effectiveKey.fill(0)
+            if (masterKey != null && masterKey !== effectiveKey) {
+                masterKey.fill(0)
             }
         }
-
-        // If primary failed and db exists, archive it
-        if (dbFile.exists()) {
-            android.util.Log.e("DriverFactory", "Database unreadable. Archiving and creating fresh database.")
-            try {
-                val bakFile = File(dbFile.absolutePath + ".bak_" + System.currentTimeMillis())
-                dbFile.renameTo(bakFile)
-            } catch (_: Exception) {}
-            try { File(dbFile.absolutePath + "-journal").delete() } catch (_: Exception) {}
-            try { File(dbFile.absolutePath + "-shm").delete() } catch (_: Exception) {}
-            try { File(dbFile.absolutePath + "-wal").delete() } catch (_: Exception) {}
-        }
-
-        // Create fresh database
-        android.util.Log.w("BLOOM_DIAG", "FRESH DB CREATED — this is a new empty database!")
-        val freshPassphrase = buildPassphrase(effectiveKey)
-        val freshFactory = SupportOpenHelperFactory(freshPassphrase)
-        return openDriver(freshFactory)
-        // NOTE: Do NOT call effectiveKey.fill(0) — the factory holds a reference
-        // to the passphrase derived from it, and the connection pool needs it alive.
     }
 }

@@ -444,7 +444,7 @@ fun CalendarScreen(
                 }
                 } // End of if (!isPartner)
             } else {
-                val groups = groupPeriodEntries(entries)
+                val groups = if (isPartner && (partnerPerms?.shareFlowIntensity != true)) emptyList() else groupPeriodEntries(entries)
                 items(groups) { group ->
                     HistoryGroupItem(
                         group = group,
@@ -464,6 +464,9 @@ fun CalendarScreen(
                         },
                         onDelete = {
                             group.ids.forEach { id -> onDeleteEntry(id) }
+                        },
+                        onEditDay = { dayEntry ->
+                            onEditEntry(dayEntry, null)
                         }
                     )
                 }
@@ -484,7 +487,8 @@ data class PeriodGroup(
     val notes: String,
     val ids: List<Long>,
     val maxPainLevel: Int? = null,
-    val symptoms: Set<String> = emptySet()
+    val symptoms: Set<String> = emptySet(),
+    val dailyEntries: List<CycleEntry> = emptyList()
 )
 
 fun groupPeriodEntries(entries: List<CycleEntry>): List<PeriodGroup> {
@@ -503,12 +507,13 @@ fun groupPeriodEntries(entries: List<CycleEntry>): List<PeriodGroup> {
     sorted[0].second.id?.let { currentIds.add(it) }
     var maxPain = sorted[0].second.painLevel?.toInt()
     var combinedSymptoms = sorted[0].second.symptoms?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }?.toMutableSet() ?: mutableSetOf()
+    var currentEntries = mutableListOf(sorted[0].second)
     
     for (i in 1 until sorted.size) {
         val (date, entry) = sorted[i]
         val prevDate = sorted[i-1].first
         
-        if (date.toEpochDays() - prevDate.toEpochDays() <= 15L) {
+        if (date.toEpochDays() - prevDate.toEpochDays() <= 7L) {
             currentEnd = date
             val int = entry.intensity?.toInt() ?: 0
             if (int > maxInt) maxInt = int
@@ -521,8 +526,9 @@ fun groupPeriodEntries(entries: List<CycleEntry>): List<PeriodGroup> {
                 }
             }
             entry.id?.let { currentIds.add(it) }
+            currentEntries.add(entry)
         } else {
-            groups.add(PeriodGroup(currentStart, currentEnd, maxInt, combinedNotes, currentIds, maxPain, combinedSymptoms))
+            groups.add(PeriodGroup(currentStart, currentEnd, maxInt, combinedNotes, currentIds, maxPain, combinedSymptoms, currentEntries))
             currentStart = date
             currentEnd = date
             maxInt = entry.intensity?.toInt() ?: 0
@@ -531,62 +537,133 @@ fun groupPeriodEntries(entries: List<CycleEntry>): List<PeriodGroup> {
             entry.id?.let { currentIds.add(it) }
             maxPain = entry.painLevel?.toInt()
             combinedSymptoms = entry.symptoms?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }?.toMutableSet() ?: mutableSetOf()
+            currentEntries = mutableListOf(entry)
         }
     }
-    groups.add(PeriodGroup(currentStart, currentEnd, maxInt, combinedNotes, currentIds, maxPain, combinedSymptoms))
+    groups.add(PeriodGroup(currentStart, currentEnd, maxInt, combinedNotes, currentIds, maxPain, combinedSymptoms, currentEntries))
     return groups.reversed()
 }
 
 @Composable
-fun HistoryGroupItem(group: PeriodGroup, isPartner: Boolean = false, partnerPerms: PartnerPermissions? = null, onEdit: () -> Unit = {}, onDelete: () -> Unit) {
+fun HistoryGroupItem(
+    group: PeriodGroup, 
+    isPartner: Boolean = false, 
+    partnerPerms: PartnerPermissions? = null, 
+    onEdit: () -> Unit = {}, 
+    onDelete: () -> Unit = {},
+    onEditDay: (CycleEntry) -> Unit = {}
+) {
     val periodColor = LocalAppColors.current.primary
     val showIntensity = !isPartner || (partnerPerms?.shareFlowIntensity == true)
     val showNotes = !isPartner || (partnerPerms?.shareSymptomsMoods == true)
+    var expanded by remember { mutableStateOf(false) }
+    val hasMultipleDays = group.dailyEntries.size > 1
     
     Card(
         modifier = Modifier.fillMaxWidth().then(
-            if (!isPartner) Modifier.clickable { onEdit() } else Modifier
+            if (hasMultipleDays) Modifier.clickable { expanded = !expanded }
+            else if (!isPartner) Modifier.clickable { onEdit() }
+            else Modifier
         ),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(12.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(periodColor)
-            )
-            
-            Spacer(Modifier.width(16.dp))
-            
-            Column(modifier = Modifier.weight(1f)) {
-                val dateStr = if (group.startDate == group.endDate) {
-                    group.startDate.toHumanReadable()
-                } else {
-                    "${group.startDate.toHumanReadable()} - ${group.endDate.toHumanReadable()}"
-                }
-                Text(dateStr, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
+        Column {
+            Row(
+                modifier = Modifier.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(12.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(periodColor)
+                )
                 
-                val intensityPart = if (showIntensity) "Intensity: ${group.maxIntensity}" else "Period Logged"
-                val painPart = if (showNotes && group.maxPainLevel != null) " | Pain: ${group.maxPainLevel}/10" else ""
-                val sympPart = if (showNotes && group.symptoms.isNotEmpty()) "\nSymptoms: ${group.symptoms.joinToString(", ")}" else ""
-                val notesPart = if (showNotes && group.notes.isNotBlank()) "\n${group.notes}" else ""
-                val fullNotes = "$intensityPart$painPart$sympPart$notesPart"
-                Text(fullNotes, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                Spacer(Modifier.width(16.dp))
+                
+                Column(modifier = Modifier.weight(1f)) {
+                    val dateStr = if (!showIntensity) {
+                        "Period Logged (Dates Redacted)"
+                    } else if (group.startDate == group.endDate) {
+                        group.startDate.toHumanReadable()
+                    } else {
+                        "${group.startDate.toHumanReadable()} - ${group.endDate.toHumanReadable()}"
+                    }
+                    Text(dateStr, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
+                    
+                    val intensityPart = if (showIntensity) "Intensity: ${group.maxIntensity}" else ""
+                    val painVal = group.maxPainLevel
+                    val painPart = if (showNotes && painVal != null) " | Pain: ${if (painVal == 0) "0/10 (No pain)" else "$painVal/10"}" else ""
+                    val sympPart = if (showNotes && group.symptoms.isNotEmpty()) "\nSymptoms: ${group.symptoms.joinToString(", ")}" else ""
+                    val notesPart = if (showNotes && group.notes.isNotBlank()) "\n${group.notes}" else ""
+                    val fullNotes = "$intensityPart$painPart$sympPart$notesPart".trimStart(' ', '|', '\n')
+                    Text(fullNotes, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    
+                    if (hasMultipleDays) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            if (expanded) "▴ Hide Daily Breakdown (${group.dailyEntries.size} days)" else "▾ Daily Breakdown (${group.dailyEntries.size} days)",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = periodColor,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+                
+                if (!isPartner) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = onEdit) {
+                            Icon(Icons.Default.Edit, contentDescription = "Edit period log", tint = periodColor, modifier = Modifier.size(20.dp))
+                        }
+                        IconButton(onClick = onDelete) {
+                            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.LightGray, modifier = Modifier.size(20.dp))
+                        }
+                    }
+                }
             }
             
-            if (!isPartner) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onEdit) {
-                        Icon(Icons.Default.Edit, contentDescription = "Edit period log", tint = periodColor, modifier = Modifier.size(20.dp))
-                    }
-                    IconButton(onClick = onDelete) {
-                        Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.LightGray, modifier = Modifier.size(20.dp))
+            if (expanded && hasMultipleDays) {
+                HorizontalDivider(color = Color.LightGray.copy(alpha = 0.4f), modifier = Modifier.padding(horizontal = 16.dp))
+                Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    group.dailyEntries.forEachIndexed { index, dayEntry ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 6.dp)
+                                .then(if (!isPartner) Modifier.clickable { onEditDay(dayEntry) } else Modifier),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(periodColor.copy(alpha = 0.7f))
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                val dayDateText = if (!showIntensity) "Day ${index + 1} (Date Redacted)" else kotlinx.datetime.LocalDate.parse(dayEntry.date).toHumanReadable()
+                                Text("Day ${index + 1}: $dayDateText", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
+                                
+                                val intStr = if (showIntensity && (dayEntry.intensity ?: 0) > 0) "Flow: ${dayEntry.intensity}" else ""
+                                val pVal = dayEntry.painLevel
+                                val painStr = if (showNotes && pVal != null) "Pain: ${if (pVal == 0) "0/10 (No pain)" else "$pVal/10"}" else ""
+                                val sympStr = if (showNotes && !dayEntry.symptoms.isNullOrBlank()) "Symptoms: ${dayEntry.symptoms?.replace(",", ", ")}" else ""
+                                
+                                val subDetails = listOf(intStr, painStr, sympStr).filter { it.isNotBlank() }.joinToString(" | ")
+                                if (subDetails.isNotBlank()) {
+                                    Text(subDetails, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                } else {
+                                    Text("No extra details logged", style = MaterialTheme.typography.bodySmall, color = Color.LightGray)
+                                }
+                            }
+                            if (!isPartner) {
+                                IconButton(onClick = { onEditDay(dayEntry) }, modifier = Modifier.size(28.dp)) {
+                                    Icon(Icons.Default.Edit, contentDescription = "Edit Day ${index + 1}", tint = periodColor.copy(alpha = 0.8f), modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -613,23 +690,26 @@ fun HistoryItem(entry: CycleEntry, isPartner: Boolean = false, partnerPerms: Par
             modifier = Modifier.padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            val isPeriodEntry = showIntensity && (entry.intensity ?: 0) > 0
             Box(
                 modifier = Modifier
                     .size(12.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(periodColor)
+                    .background(if (isPeriodEntry) periodColor else Color.Gray)
             )
             
             Spacer(Modifier.width(16.dp))
             
             Column(modifier = Modifier.weight(1f)) {
-                Text(kotlinx.datetime.LocalDate.parse(entry.date).toHumanReadable(), style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
+                val dateText = kotlinx.datetime.LocalDate.parse(entry.date).toHumanReadable()
+                Text(dateText, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
                 
                 val notesStr = if (showNotes) (entry.notes ?: "") else ""
                 val sympStr = if (showNotes && !entry.symptoms.isNullOrBlank()) "Symptoms: ${entry.symptoms?.replace(",", ", ")}" else ""
                 val rel = if (showSexual) entry.sexualRelations else null
                 val intensityPart = if (showIntensity && (entry.intensity ?: 0) > 0) "Intensity: ${entry.intensity}" else ""
-                val painPart = if (showNotes && (entry.painLevel ?: 0) > 0) "Pain: ${entry.painLevel}/10" else ""
+                val painVal = entry.painLevel
+                val painPart = if (showNotes && painVal != null) "Pain: ${if (painVal == 0) "0/10 (No pain)" else "$painVal/10"}" else ""
                 val relPart = if (!rel.isNullOrBlank()) "Activity: ${rel.replaceFirstChar { it.uppercase() }}" else ""
                 
                 val topRow = listOf(intensityPart, painPart, relPart).filter { it.isNotBlank() }.joinToString(" | ")

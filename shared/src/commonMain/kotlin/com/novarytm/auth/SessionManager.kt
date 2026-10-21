@@ -22,7 +22,7 @@ class SessionManager(
     private val storage: com.novarytm.storage.SecureStorageManager
 ) {
     private val _state = kotlinx.coroutines.flow.MutableStateFlow<SessionState>(
-        if ((storage.getUserId() != null || storage.getTargetSyncId() != null) && storage.getPinHash() != null) {
+        if ((storage.getUserId() != null || !storage.getTargetSyncId().isNullOrEmpty()) && storage.getPinHash() != null) {
             SessionState.Locked
         }
         else SessionState.Onboarding
@@ -31,7 +31,7 @@ class SessionManager(
 
     fun unlock() {
         storage.setAuthFlowActive(false)
-        val isPartner = storage.getTargetSyncId() != null && storage.getUserId() == null
+        val isPartner = !storage.getTargetSyncId().isNullOrEmpty() && storage.getUserId() == null
         _state.value = SessionState.Unlocked(isPartner)
     }
 
@@ -45,41 +45,47 @@ class SessionManager(
     }
 
     fun reset() {
-        println("SessionManager.reset() CALLED — stack trace:")
-        Thread.currentThread().stackTrace.take(10).forEach { println("  at $it") }
         storage.clearAll()
         _state.value = SessionState.Onboarding
     }
     
     fun completeOnboarding(userId: String, pinHash: ByteArray, masterKey: ByteArray, salt: ByteArray, isRestore: Boolean = false) {
-        if (storage.getMasterKey() == null) {
-            storage.saveMasterKey(masterKey)
+        try {
+            if (storage.getMasterKey() == null) {
+                storage.saveMasterKey(masterKey)
+            }
+            storage.saveUserId(userId)
+            storage.savePinHash(pinHash)
+            storage.saveDerivationSalt(salt)  // VULN-01 FIX: Persist Argon2id salt
+            _state.value = SessionState.Unlocked(isPartner = false, justRestored = isRestore)
+        } finally {
+            masterKey.fill(0)
+            pinHash.fill(0)
+            salt.fill(0)
         }
-        storage.saveUserId(userId)
-        storage.savePinHash(pinHash)
-        storage.saveDerivationSalt(salt)  // VULN-01 FIX: Persist Argon2id salt
-        masterKey.fill(0)
-        pinHash.fill(0)
-        salt.fill(0)
-        _state.value = SessionState.Unlocked(isPartner = false, justRestored = isRestore)
     }
 
     fun completePartnerOnboarding(targetId: String, pinHash: ByteArray, masterKey: ByteArray, secretKey: ByteArray? = null, salt: ByteArray = ByteArray(0)) {
-        if (storage.getMasterKey() == null) {
-            storage.saveMasterKey(masterKey)
+        try {
+            if (storage.getMasterKey() == null) {
+                storage.saveMasterKey(masterKey)
+            }
+            storage.saveTargetSyncId(targetId)
+            storage.savePinHash(pinHash)
+            secretKey?.let { 
+                storage.saveSyncSecretKey(it)
+            }
+            if (salt.isNotEmpty()) {
+                storage.saveDerivationSalt(salt)  // VULN-01 FIX: Persist Argon2id salt
+            }
+            _state.value = SessionState.Unlocked(isPartner = true)
+        } finally {
+            masterKey.fill(0)
+            pinHash.fill(0)
+            secretKey?.fill(0)
+            if (salt.isNotEmpty()) {
+                salt.fill(0)
+            }
         }
-        storage.saveTargetSyncId(targetId)
-        storage.savePinHash(pinHash)
-        secretKey?.let { 
-            storage.saveSyncSecretKey(it)
-            it.fill(0)
-        }
-        if (salt.isNotEmpty()) {
-            storage.saveDerivationSalt(salt)  // VULN-01 FIX: Persist Argon2id salt
-            salt.fill(0)
-        }
-        masterKey.fill(0)
-        pinHash.fill(0)
-        _state.value = SessionState.Unlocked(isPartner = true)
     }
 }
