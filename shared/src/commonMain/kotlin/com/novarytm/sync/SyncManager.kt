@@ -162,7 +162,19 @@ class SyncManager(
                 // Owner fetching their own data
                 googleDriveManager.pullSyncBlob()
             }
-            if (encryptedBase64.isNullOrEmpty() || encryptedBase64 == "REVOKED") {
+            if (encryptedBase64.isNullOrEmpty()) {
+                return@withContext true
+            }
+            if (encryptedBase64 == "REVOKED") {
+                if (!isOwner) {
+                    database.transaction {
+                        queries.deleteAllEntries()
+                        queries.deleteAllPregnancyTests()
+                        queries.deleteAllReminders()
+                        queries.deleteBirthControl()
+                    }
+                    return@withContext false
+                }
                 return@withContext true
             }
             importEncryptedSyncPayloadInternal(encryptedBase64)

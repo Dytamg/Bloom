@@ -162,7 +162,7 @@ pub fn analyze_cycle_history_internal(dates_csv: &str) -> String {
     let mut intervals = Vec::new();
     for i in 1..cycle_starts.len() {
         let diff = (cycle_starts[i] - cycle_starts[i-1]).num_days();
-        if diff > 15 && diff < 90 {
+        if diff >= 15 && diff <= 90 {
             intervals.push(diff as u32);
         }
     }
@@ -615,100 +615,7 @@ pub extern "system" fn Java_com_novarytm_ffi_RustBridge_generate_1random_1key(
     })).unwrap_or(std::ptr::null_mut() as jbyteArray)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    #[test]
-    fn test_phase_logic() {
-        let today = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
-        assert_eq!(calculate_phase_internal("2024-01-15", 28, today), "Menstrual");
-        assert_eq!(calculate_phase_internal("2024-01-10", 28, today), "Follicular");
-        assert_eq!(calculate_phase_internal("2024-01-02", 28, today), "Ovulation");
-        assert_eq!(calculate_phase_internal("2023-12-27", 28, today), "Luteal");
-        assert_eq!(calculate_phase_internal("2024-01-20", 28, today), "Upcoming");
-    }
-
-    #[test]
-    fn test_phase_logic_dynamic_cycles() {
-        let today = NaiveDate::from_ymd_opt(2024, 2, 1).unwrap();
-        // 35-day cycle: start = 2024-01-01 (day 31) -> Luteal
-        assert_eq!(calculate_phase_internal("2024-01-01", 35, today), "Luteal");
-        // Ovulation center for 35 days = 35 - 14 = 21. Day 20 or 21:
-        // Today - 21 days = 2024-01-11
-        assert_eq!(calculate_phase_internal("2024-01-11", 35, today), "Ovulation");
-        // Follicular: Day 10 (today - 10 = 2024-01-22)
-        assert_eq!(calculate_phase_internal("2024-01-22", 35, today), "Follicular");
-        // Menstrual: Day 2 (today - 2 = 2024-01-30)
-        assert_eq!(calculate_phase_internal("2024-01-30", 35, today), "Menstrual");
-    }
-
-    #[test]
-    fn test_analyze_history_cycle_start_grouping() {
-        // Pass individual bleeding dates instead of pre-grouped cycle starts
-        let dates_csv = "2024-01-01,2024-01-02,2024-01-03,2024-01-29,2024-01-30,2024-01-31,2024-02-26,2024-02-27";
-        let res_json = analyze_cycle_history_internal(dates_csv);
-        let pred: prediction_engine::CyclePrediction = serde_json::from_str(&res_json).unwrap();
-        assert_eq!(pred.estimated_length_days, 28);
-        assert!(!pred.is_irregular);
-    }
-
-    #[test]
-    fn test_responsive_1_2_cycle_history() {
-        let one_cycle = vec![30];
-        let p1 = prediction_engine::predict_irregular_cycle(&one_cycle);
-        assert_eq!(p1.estimated_length_days, 30);
-        assert!(!p1.is_irregular);
-
-        let two_regular = vec![28, 30];
-        let p2 = prediction_engine::predict_irregular_cycle(&two_regular);
-        assert_eq!(p2.estimated_length_days, 29);
-        assert!(!p2.is_irregular);
-
-        let two_irregular = vec![24, 34];
-        let p3 = prediction_engine::predict_irregular_cycle(&two_irregular);
-        assert_eq!(p3.estimated_length_days, 29);
-        assert!(p3.is_irregular);
-    }
-
-    #[test]
-    fn test_dedup_and_gap_handling_in_next_cycle() {
-        let history = serde_json::json!([
-            {"date": "2024-01-01", "intensity": 2, "notes": null},
-            {"date": "2024-01-01", "intensity": 3, "notes": null}, // Duplicate date
-            {"date": "2024-01-03", "intensity": 2, "notes": null}, // 2-day gap
-            {"date": "2024-01-05", "intensity": 1, "notes": null}, // 2-day gap
-            {"date": "2024-01-29", "intensity": 3, "notes": null}, // New cycle (>7 days)
-            {"date": "2024-01-30", "intensity": 2, "notes": null}
-        ]).to_string();
-
-        let result = calculate_next_cycle_native_internal(&history);
-        assert!(result.contains("expectedPeriodDays"));
-    }
-
-    #[test]
-    fn test_pregnancy_test_redaction() {
-        let perms = PartnerPermissions {
-            share_cycle_phase: true,
-            share_flow_intensity: true,
-            share_symptoms_moods: true,
-            share_birth_control: true,
-            share_pregnancy_tests: false,
-            share_sexual_activity: true,
-        };
-        save_partner_permissions_internal(perms);
-        let entries_json = serde_json::json!([
-            {"date": "2024-01-01", "intensity": 2, "notes": "Took a pregnancy test, positive hCG", "sexual_relations": null, "pain_level": null, "symptoms": null}
-        ]).to_string();
-        let key_bytes = [1u8; 32];
-        use base64::{Engine as _, engine::general_purpose};
-        let key_b64 = general_purpose::STANDARD.encode(key_bytes);
-        let payload = generate_filtered_payload_internal(100, None, entries_json, "partner1", &key_b64);
-        let decrypted = decrypt_payload_internal(&payload, "partner1", &key_bytes).unwrap();
-        assert!(!decrypted.contains("pregnancy"));
-        assert!(!decrypted.contains("positive"));
-    }
-}
 
 use serde_json::json;
 
@@ -955,4 +862,718 @@ pub extern "system" fn Java_com_novarytm_ffi_RustBridge_decrypt_1from_1sync(
             }
         }
     })).unwrap_or(std::ptr::null_mut() as jstring)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::{Duration, Local, NaiveDate};
+    use serde_json::Value;
+    use base64::{Engine as _, engine::general_purpose};
+
+    static TEST_MUTEX: Mutex<()> = Mutex::new(());
+
+    // =========================================================================
+    // BASELINE REGRESSION TESTS
+    // =========================================================================
+
+    #[test]
+    fn test_phase_logic() {
+        let today = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        assert_eq!(calculate_phase_internal("2024-01-15", 28, today), "Menstrual");
+        assert_eq!(calculate_phase_internal("2024-01-10", 28, today), "Follicular");
+        assert_eq!(calculate_phase_internal("2024-01-02", 28, today), "Ovulation");
+        assert_eq!(calculate_phase_internal("2023-12-27", 28, today), "Luteal");
+        assert_eq!(calculate_phase_internal("2024-01-20", 28, today), "Upcoming");
+    }
+
+    #[test]
+    fn test_phase_logic_dynamic_cycles() {
+        let today = NaiveDate::from_ymd_opt(2024, 2, 1).unwrap();
+        // 35-day cycle: start = 2024-01-01 (day 31) -> Luteal
+        assert_eq!(calculate_phase_internal("2024-01-01", 35, today), "Luteal");
+        // Ovulation center for 35 days = 35 - 14 = 21. Day 20 or 21:
+        // Today - 21 days = 2024-01-11
+        assert_eq!(calculate_phase_internal("2024-01-11", 35, today), "Ovulation");
+        // Follicular: Day 10 (today - 10 = 2024-01-22)
+        assert_eq!(calculate_phase_internal("2024-01-22", 35, today), "Follicular");
+        // Menstrual: Day 2 (today - 2 = 2024-01-30)
+        assert_eq!(calculate_phase_internal("2024-01-30", 35, today), "Menstrual");
+    }
+
+    #[test]
+    fn test_analyze_history_cycle_start_grouping() {
+        let dates_csv = "2024-01-01,2024-01-02,2024-01-03,2024-01-29,2024-01-30,2024-01-31,2024-02-26,2024-02-27";
+        let res_json = analyze_cycle_history_internal(dates_csv);
+        let pred: prediction_engine::CyclePrediction = serde_json::from_str(&res_json).unwrap();
+        assert_eq!(pred.estimated_length_days, 28);
+        assert!(!pred.is_irregular);
+    }
+
+    #[test]
+    fn test_responsive_1_2_cycle_history() {
+        let one_cycle = vec![30];
+        let p1 = prediction_engine::predict_irregular_cycle(&one_cycle);
+        assert_eq!(p1.estimated_length_days, 30);
+        assert!(!p1.is_irregular);
+
+        let two_regular = vec![28, 30];
+        let p2 = prediction_engine::predict_irregular_cycle(&two_regular);
+        assert_eq!(p2.estimated_length_days, 29);
+        assert!(!p2.is_irregular);
+
+        let two_irregular = vec![24, 34];
+        let p3 = prediction_engine::predict_irregular_cycle(&two_irregular);
+        assert_eq!(p3.estimated_length_days, 29);
+        assert!(p3.is_irregular);
+    }
+
+    #[test]
+    fn test_dedup_and_gap_handling_in_next_cycle() {
+        let history = serde_json::json!([
+            {"date": "2024-01-01", "intensity": 2, "notes": null},
+            {"date": "2024-01-01", "intensity": 3, "notes": null},
+            {"date": "2024-01-03", "intensity": 2, "notes": null},
+            {"date": "2024-01-05", "intensity": 1, "notes": null},
+            {"date": "2024-01-29", "intensity": 3, "notes": null},
+            {"date": "2024-01-30", "intensity": 2, "notes": null}
+        ]).to_string();
+
+        let result = calculate_next_cycle_native_internal(&history);
+        assert!(result.contains("expectedPeriodDays"));
+    }
+
+    #[test]
+    fn test_pregnancy_test_redaction() {
+        let _lock = TEST_MUTEX.lock().unwrap();
+        let perms = PartnerPermissions {
+            share_cycle_phase: true,
+            share_flow_intensity: true,
+            share_symptoms_moods: true,
+            share_birth_control: true,
+            share_pregnancy_tests: false,
+            share_sexual_activity: true,
+        };
+        save_partner_permissions_internal(perms);
+        let entries_json = serde_json::json!([
+            {"date": "2024-01-01", "intensity": 2, "notes": "Took a pregnancy test, positive hCG", "sexual_relations": null, "pain_level": null, "symptoms": null}
+        ]).to_string();
+        let key_bytes = [1u8; 32];
+        let key_b64 = general_purpose::STANDARD.encode(key_bytes);
+        let payload = generate_filtered_payload_internal(100, None, entries_json, "partner1", &key_b64);
+        let decrypted = decrypt_payload_internal(&payload, "partner1", &key_bytes).unwrap();
+        assert!(!decrypted.contains("pregnancy"));
+        assert!(!decrypted.contains("positive"));
+    }
+
+    // =========================================================================
+    // SCENARIO A: Regular Cycle User Simulation
+    // =========================================================================
+
+    #[test]
+    fn test_scenario_a_regular_cycle_1_2_4_cycles() {
+        // 1 cycle (2 periods logged 28 days apart, 5 days each)
+        let p1 = "2026-01-01,2026-01-02,2026-01-03,2026-01-04,2026-01-05";
+        let p2 = "2026-01-29,2026-01-30,2026-01-31,2026-02-01,2026-02-02";
+        let csv_1_cycle = format!("{},{}", p1, p2);
+        let res_1: prediction_engine::CyclePrediction =
+            serde_json::from_str(&analyze_cycle_history_internal(&csv_1_cycle)).unwrap();
+        assert_eq!(res_1.estimated_length_days, 28, "1 cycle should estimate 28 days");
+        assert!(!res_1.is_irregular, "1 cycle 28 days should not be irregular");
+
+        // 2 cycles (3 periods logged 28 days apart)
+        let p3 = "2026-02-26,2026-02-27,2026-02-28,2026-03-01,2026-03-02";
+        let csv_2_cycles = format!("{},{},{}", p1, p2, p3);
+        let res_2: prediction_engine::CyclePrediction =
+            serde_json::from_str(&analyze_cycle_history_internal(&csv_2_cycles)).unwrap();
+        assert_eq!(res_2.estimated_length_days, 28, "2 cycles should estimate 28 days");
+        assert!(!res_2.is_irregular, "2 cycles 28 days should not be irregular");
+
+        // 4 cycles (5 periods logged 28 days apart, each 5 days long)
+        let p4 = "2026-03-26,2026-03-27,2026-03-28,2026-03-29,2026-03-30";
+        let p5 = "2026-04-23,2026-04-24,2026-04-25,2026-04-26,2026-04-27";
+        let csv_4_cycles = format!("{},{},{},{},{}", p1, p2, p3, p4, p5);
+        let res_4: prediction_engine::CyclePrediction =
+            serde_json::from_str(&analyze_cycle_history_internal(&csv_4_cycles)).unwrap();
+        assert_eq!(res_4.estimated_length_days, 28, "4 cycles should estimate 28 days");
+        assert!(!res_4.is_irregular, "4 cycles 28 days should not be irregular");
+        assert_eq!(res_4.variance_days, 0, "Variance for identical 28-day intervals should be 0");
+    }
+
+    #[test]
+    fn test_scenario_a_calculate_next_cycle_regular() {
+        let history = serde_json::json!([
+            {"date": "2026-01-01", "intensity": 3, "notes": null},
+            {"date": "2026-01-02", "intensity": 3, "notes": null},
+            {"date": "2026-01-03", "intensity": 2, "notes": null},
+            {"date": "2026-01-04", "intensity": 2, "notes": null},
+            {"date": "2026-01-05", "intensity": 1, "notes": null},
+            {"date": "2026-01-29", "intensity": 3, "notes": null},
+            {"date": "2026-01-30", "intensity": 3, "notes": null},
+            {"date": "2026-01-31", "intensity": 2, "notes": null},
+            {"date": "2026-02-01", "intensity": 2, "notes": null},
+            {"date": "2026-02-02", "intensity": 1, "notes": null}
+        ]).to_string();
+
+        let res_json = calculate_next_cycle_native_internal(&history);
+        let v: Value = serde_json::from_str(&res_json).expect("Valid JSON response");
+
+        let expected_period_days: Vec<String> = v["expectedPeriodDays"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x.as_str().unwrap().to_string())
+            .collect();
+        let fertile_window: Vec<String> = v["fertileWindow"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x.as_str().unwrap().to_string())
+            .collect();
+        let current_day = v["currentDayOfCycle"].as_i64().unwrap();
+
+        // 1. Expected period days must include the past cycles:
+        assert!(expected_period_days.contains(&"2026-01-01".to_string()));
+        assert!(expected_period_days.contains(&"2026-01-29".to_string()));
+
+        // 2. Expected period days must predict future cycles (28 days apart):
+        // Future cycle 1: 2026-01-29 + 28 days = 2026-02-26
+        assert!(expected_period_days.contains(&"2026-02-26".to_string()));
+        // Future cycle 2: 2026-01-29 + 56 days = 2026-03-26
+        assert!(expected_period_days.contains(&"2026-03-26".to_string()));
+        // Future cycle 3: 2026-01-29 + 84 days = 2026-04-23
+        assert!(expected_period_days.contains(&"2026-04-23".to_string()));
+
+        // 3. Fertile window for 28-day cycle: ~14 days before next cycle start (-2..=+2)
+        // For past cycle 1 (next start 2026-01-29): ovulation = 2026-01-15 -> window 2026-01-13..2026-01-17
+        assert!(fertile_window.contains(&"2026-01-13".to_string()));
+        assert!(fertile_window.contains(&"2026-01-14".to_string()));
+        assert!(fertile_window.contains(&"2026-01-15".to_string()));
+        assert!(fertile_window.contains(&"2026-01-16".to_string()));
+        assert!(fertile_window.contains(&"2026-01-17".to_string()));
+
+        // For future cycle 1 (starts 2026-02-26, next starts 2026-03-26):
+        // Ovulation = 2026-03-26 - 14 = 2026-03-12 -> window 2026-03-10..2026-03-14
+        assert!(fertile_window.contains(&"2026-03-12".to_string()));
+
+        // 4. Current day of cycle must be in 1..=28
+        assert!(current_day >= 1 && current_day <= 28, "Current day {} out of 1..=28", current_day);
+    }
+
+    #[test]
+    fn test_scenario_a_calculate_phase_full_cycle() {
+        let start = "2026-05-01";
+        let start_date = NaiveDate::from_ymd_opt(2026, 5, 1).unwrap();
+        let cycle_len = 28;
+
+        // Days 0..4: Menstrual (Days 1 to 5 of cycle)
+        for d in 0..5 {
+            let today = start_date + Duration::days(d);
+            assert_eq!(
+                calculate_phase_internal(start, cycle_len, today),
+                "Menstrual",
+                "Day {} should be Menstrual", d
+            );
+        }
+
+        // Days 5..12: Follicular (ovulation center = 14, current_day < 13)
+        for d in 5..13 {
+            let today = start_date + Duration::days(d);
+            assert_eq!(
+                calculate_phase_internal(start, cycle_len, today),
+                "Follicular",
+                "Day {} should be Follicular", d
+            );
+        }
+
+        // Days 13..14: Ovulation
+        for d in 13..=14 {
+            let today = start_date + Duration::days(d);
+            assert_eq!(
+                calculate_phase_internal(start, cycle_len, today),
+                "Ovulation",
+                "Day {} should be Ovulation", d
+            );
+        }
+
+        // Days 15..27: Luteal
+        for d in 15..28 {
+            let today = start_date + Duration::days(d);
+            assert_eq!(
+                calculate_phase_internal(start, cycle_len, today),
+                "Luteal",
+                "Day {} should be Luteal", d
+            );
+        }
+
+        // Day 28: wraps around via modulo 28 -> Day 0 -> Menstrual
+        assert_eq!(
+            calculate_phase_internal(start, cycle_len, start_date + Duration::days(28)),
+            "Menstrual"
+        );
+
+        // Negative days (before period start): Upcoming
+        assert_eq!(
+            calculate_phase_internal(start, cycle_len, start_date - Duration::days(1)),
+            "Upcoming"
+        );
+        assert_eq!(
+            calculate_phase_internal(start, cycle_len, start_date - Duration::days(10)),
+            "Upcoming"
+        );
+
+        // Edge cases
+        assert_eq!(calculate_phase_internal(start, 0, start_date), "Unknown");
+        assert_eq!(calculate_phase_internal(start, -5, start_date), "Unknown");
+        assert_eq!(calculate_phase_internal("invalid-date", cycle_len, start_date), "Invalid Date");
+    }
+
+    // =========================================================================
+    // SCENARIO B: Irregular Cycle User & Real Bug Regression Simulation
+    // =========================================================================
+
+    #[test]
+    fn test_scenario_b_exact_real_world_user_report() {
+        // Exact real-world report:
+        // Period 1: 2026-07-20 to 2026-07-23
+        // Period 2: 2026-08-04 to 2026-08-07
+        // Single-day entry: 2026-08-22 with intensity = 2, pain, no symptoms
+        let history = serde_json::json!([
+            {"date": "2026-07-20", "intensity": 2, "notes": null},
+            {"date": "2026-07-21", "intensity": 2, "notes": null},
+            {"date": "2026-07-22", "intensity": 2, "notes": null},
+            {"date": "2026-07-23", "intensity": 1, "notes": null},
+            {"date": "2026-08-04", "intensity": 3, "notes": null},
+            {"date": "2026-08-05", "intensity": 2, "notes": null},
+            {"date": "2026-08-06", "intensity": 2, "notes": null},
+            {"date": "2026-08-07", "intensity": 1, "notes": null},
+            {"date": "2026-08-22", "intensity": 2, "painLevel": 3, "symptoms": null, "notes": null}
+        ]).to_string();
+
+        let res_json = calculate_next_cycle_native_internal(&history);
+        let v: Value = serde_json::from_str(&res_json).expect("Valid JSON response");
+        let expected_period_days: Vec<String> = v["expectedPeriodDays"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x.as_str().unwrap().to_string())
+            .collect();
+
+        // Verify that ALL 3 cycle starts (2026-07-20, 2026-08-04, 2026-08-22) are detected!
+        assert!(
+            expected_period_days.contains(&"2026-07-20".to_string()),
+            "Cycle start 1 (2026-07-20) must be detected in expected periods"
+        );
+        assert!(
+            expected_period_days.contains(&"2026-08-04".to_string()),
+            "Cycle start 2 (2026-08-04) must be detected in expected periods"
+        );
+        assert!(
+            expected_period_days.contains(&"2026-08-22".to_string()),
+            "Cycle start 3 (2026-08-22) must be detected in expected periods"
+        );
+
+        // Also verify analyze_cycle_history_internal with dates_csv includes 15-day interval (July 20 to Aug 4)
+        let dates_csv = "2026-07-20,2026-07-21,2026-07-22,2026-07-23,2026-08-04,2026-08-05,2026-08-06,2026-08-07,2026-08-22";
+        let analysis_str = analyze_cycle_history_internal(dates_csv);
+        let analysis: prediction_engine::CyclePrediction = serde_json::from_str(&analysis_str).unwrap();
+        // Since intervals are [15, 18], mean is 16.5 -> 17, clamped to 21 for < 3 samples
+        assert!(analysis.estimated_length_days >= 15 && analysis.estimated_length_days <= 45);
+    }
+
+    #[test]
+    fn test_scenario_b_73_days_without_entry_and_modulo_wrapping() {
+        let today = Local::now().date_naive();
+        let last_start = today - Duration::days(73);
+
+        let history = serde_json::json!([
+            {"date": last_start.format("%Y-%m-%d").to_string(), "intensity": 3, "notes": null}
+        ]).to_string();
+
+        let res_json = calculate_next_cycle_native_internal(&history);
+        let v: Value = serde_json::from_str(&res_json).expect("Valid JSON response");
+        let current_day = v["currentDayOfCycle"].as_i64().unwrap() as i32;
+
+        // Default 28 days estimated length.
+        // 73 days without entry: (73 % 28) + 1 = 17 + 1 = 18.
+        // It must NEVER output 73 of 28 or exceed estimated_length_days!
+        assert_eq!(current_day, 18, "73 days since start should wrap to day 18 of 28");
+        assert!(current_day <= 28 && current_day >= 1);
+
+        // Test boundary wraps
+        let test_offsets = [(0, 1), (27, 28), (28, 1), (56, 1), (84, 1), (100, 17)];
+        for (offset, expected_day) in test_offsets {
+            let date = today - Duration::days(offset);
+            let h = serde_json::json!([
+                {"date": date.format("%Y-%m-%d").to_string(), "intensity": 2, "notes": null}
+            ]).to_string();
+            let res: Value = serde_json::from_str(&calculate_next_cycle_native_internal(&h)).unwrap();
+            let day = res["currentDayOfCycle"].as_i64().unwrap() as i32;
+            assert_eq!(day, expected_day, "Offset {} should wrap to day {}", offset, expected_day);
+        }
+    }
+
+    #[test]
+    fn test_scenario_b_highly_irregular_cycles_and_dynamic_ovulation() {
+        // Intervals of [22, 39, 24, 41, 27] days
+        let irregular_intervals = vec![22, 39, 24, 41, 27];
+        let pred = prediction_engine::predict_irregular_cycle(&irregular_intervals);
+        assert!(pred.is_irregular, "Cycle with intervals [22, 39, 24, 41, 27] must be marked irregular");
+        assert!(pred.estimated_length_days >= 25 && pred.estimated_length_days <= 35);
+        assert!(pred.variance_days > 0);
+
+        // Test MAD outlier clipping: extreme 85-day outlier
+        let intervals_with_outlier = vec![22, 39, 24, 41, 27, 85];
+        let pred_outlier = prediction_engine::predict_irregular_cycle(&intervals_with_outlier);
+        assert!(pred_outlier.is_irregular);
+        // Outlier 85 should be clipped by MAD threshold, preventing the estimated length from ballooning
+        assert!(pred_outlier.estimated_length_days < 45, "Estimated length should be clipped by MAD, got {}", pred_outlier.estimated_length_days);
+
+        // Dynamic Ovulation Scaling:
+        // 1. Standard 28-day cycle: Ovulation center is 28 - 14 = 14
+        let base_date = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+        assert_eq!(calculate_phase_internal("2026-01-01", 28, base_date + Duration::days(14)), "Ovulation");
+
+        // 2. 35-day cycle: Ovulation center is 35 - 14 = 21 (NOT day 14!)
+        // Day 14 should be Follicular
+        assert_eq!(
+            calculate_phase_internal("2026-01-01", 35, base_date + Duration::days(14)),
+            "Follicular",
+            "Day 14 in a 35-day cycle must be Follicular, not Ovulation"
+        );
+        // Day 20 and Day 21 should be Ovulation
+        assert_eq!(
+            calculate_phase_internal("2026-01-01", 35, base_date + Duration::days(20)),
+            "Ovulation",
+            "Day 20 in a 35-day cycle must be Ovulation"
+        );
+        assert_eq!(
+            calculate_phase_internal("2026-01-01", 35, base_date + Duration::days(21)),
+            "Ovulation",
+            "Day 21 in a 35-day cycle must be Ovulation"
+        );
+        // Day 25 should be Luteal
+        assert_eq!(
+            calculate_phase_internal("2026-01-01", 35, base_date + Duration::days(25)),
+            "Luteal"
+        );
+
+        // 3. 21-day cycle: Ovulation center is max(7, 21 - 14) = 7
+        assert_eq!(
+            calculate_phase_internal("2026-01-01", 21, base_date + Duration::days(7)),
+            "Ovulation"
+        );
+
+        // 4. 42-day cycle: Ovulation center is 42 - 14 = 28
+        assert_eq!(
+            calculate_phase_internal("2026-01-01", 42, base_date + Duration::days(14)),
+            "Follicular"
+        );
+        assert_eq!(
+            calculate_phase_internal("2026-01-01", 42, base_date + Duration::days(28)),
+            "Ovulation"
+        );
+    }
+
+    #[test]
+    fn test_scenario_b_skipped_days_and_duplicate_entries_period_duration() {
+        // Cycle 1: Day 1 (2026-01-01) logged twice, Day 3 (2026-01-03) logged, Day 2 skipped.
+        // Cycle 2: Day 1 (2026-01-29) logged, Day 3 (2026-01-31) logged, Day 2 skipped.
+        let history = serde_json::json!([
+            {"date": "2026-01-01", "intensity": 2, "notes": null},
+            {"date": "2026-01-01", "intensity": 3, "notes": null}, // Duplicate same-day entry
+            {"date": "2026-01-03", "intensity": 2, "notes": null}, // Skipped Day 2 (gap of 2 days)
+            {"date": "2026-01-29", "intensity": 2, "notes": null},
+            {"date": "2026-01-31", "intensity": 2, "notes": null}  // Skipped Day 2 (gap of 2 days)
+        ]).to_string();
+
+        let res_json = calculate_next_cycle_native_internal(&history);
+        let v: Value = serde_json::from_str(&res_json).expect("Valid JSON response");
+        let expected_period_days: Vec<String> = v["expectedPeriodDays"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x.as_str().unwrap().to_string())
+            .collect();
+
+        // Intra-period skipped days: duration for cycle 1 is 1 + 2 = 3 days.
+        // Expected period for cycle 1 must include exactly 2026-01-01, 2026-01-02, 2026-01-03.
+        assert!(expected_period_days.contains(&"2026-01-01".to_string()));
+        assert!(expected_period_days.contains(&"2026-01-02".to_string()));
+        assert!(expected_period_days.contains(&"2026-01-03".to_string()));
+        assert!(!expected_period_days.contains(&"2026-01-04".to_string()), "Day 4 should not be in 3-day duration period");
+
+        // Cycle 2: duration is also 3 days: 2026-01-29, 2026-01-30, 2026-01-31.
+        assert!(expected_period_days.contains(&"2026-01-29".to_string()));
+        assert!(expected_period_days.contains(&"2026-01-30".to_string()));
+        assert!(expected_period_days.contains(&"2026-01-31".to_string()));
+        assert!(!expected_period_days.contains(&"2026-02-01".to_string()));
+    }
+
+    #[test]
+    fn test_scenario_b_mid_cycle_zero_flow_entries() {
+        // Cycle 1: 2026-01-01 to 2026-01-04 (intensity > 0)
+        // Mid-cycle: 2026-01-15 with intensity = 0 (cramps / ovulation symptom logging)
+        // Cycle 2: 2026-01-29 to 2026-02-01 (intensity > 0)
+        let history = serde_json::json!([
+            {"date": "2026-01-01", "intensity": 2, "notes": null},
+            {"date": "2026-01-02", "intensity": 2, "notes": null},
+            {"date": "2026-01-03", "intensity": 2, "notes": null},
+            {"date": "2026-01-04", "intensity": 1, "notes": null},
+            {"date": "2026-01-15", "intensity": 0, "painLevel": 5, "symptoms": "Mid-cycle ovulation pain", "notes": "Cramps"},
+            {"date": "2026-01-29", "intensity": 2, "notes": null},
+            {"date": "2026-01-30", "intensity": 2, "notes": null},
+            {"date": "2026-01-31", "intensity": 2, "notes": null},
+            {"date": "2026-02-01", "intensity": 1, "notes": null}
+        ]).to_string();
+
+        let res_json = calculate_next_cycle_native_internal(&history);
+        let v: Value = serde_json::from_str(&res_json).expect("Valid JSON response");
+        let expected_period_days: Vec<String> = v["expectedPeriodDays"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x.as_str().unwrap().to_string())
+            .collect();
+
+        // 2026-01-15 has intensity = 0, so it must NOT be counted as a period day or cycle start!
+        assert!(!expected_period_days.contains(&"2026-01-15".to_string()), "Zero-flow entry must NOT be in expected period days");
+        // Only 2026-01-01 and 2026-01-29 are cycle starts
+        assert!(expected_period_days.contains(&"2026-01-01".to_string()));
+        assert!(expected_period_days.contains(&"2026-01-29".to_string()));
+    }
+
+    // =========================================================================
+    // SCENARIO C: Owner & Partner Cryptography, Granular Sharing & Redaction
+    // =========================================================================
+
+    #[test]
+    fn test_scenario_c_granular_permissions_redaction() {
+        let _lock = TEST_MUTEX.lock().unwrap();
+        let key_bytes = [7u8; 32];
+        let key_b64 = general_purpose::STANDARD.encode(key_bytes);
+        let partner_id = "partner_qa_user_42";
+
+        let sample_entries = serde_json::json!([
+            {
+                "date": "2026-03-01",
+                "intensity": 3,
+                "notes": "Took pregnancy test, positive result!",
+                "sexualRelations": "Protected",
+                "painLevel": 4,
+                "symptoms": "Bloating and cramps"
+            },
+            {
+                "date": "2026-03-02",
+                "intensity": 0,
+                "notes": "Normal day, feeling good",
+                "sexualRelations": null,
+                "painLevel": 0,
+                "symptoms": null
+            }
+        ]).to_string();
+
+        let sample_bc = serde_json::json!({
+            "type": "IUD",
+            "is_active": true
+        }).to_string();
+
+        // 1. All permissions TRUE: Everything remains intact
+        save_partner_permissions_internal(PartnerPermissions {
+            share_cycle_phase: true,
+            share_flow_intensity: true,
+            share_symptoms_moods: true,
+            share_birth_control: true,
+            share_pregnancy_tests: true,
+            share_sexual_activity: true,
+        });
+        let payload_enc = generate_filtered_payload_internal(1000, Some(sample_bc.clone()), sample_entries.clone(), partner_id, &key_b64);
+        let decrypted: SyncPayload = serde_json::from_str(&decrypt_payload_internal(&payload_enc, partner_id, &key_bytes).unwrap()).unwrap();
+        assert_eq!(decrypted.last_updated, 1000);
+        assert!(decrypted.birth_control.is_some());
+        assert_eq!(decrypted.birth_control.unwrap().r#type, "IUD");
+        assert_eq!(decrypted.entries[0].intensity, 3);
+        assert_eq!(decrypted.entries[0].pain_level, Some(4));
+        assert_eq!(decrypted.entries[0].symptoms, Some("Bloating and cramps".to_string()));
+        assert_eq!(decrypted.entries[0].sexual_relations, Some("Protected".to_string()));
+        assert!(decrypted.entries[0].notes.as_ref().unwrap().contains("positive"));
+
+        // 2. share_flow_intensity == false: Intensities > 0 clamped to 1, 0 remains 0
+        save_partner_permissions_internal(PartnerPermissions {
+            share_cycle_phase: true,
+            share_flow_intensity: false,
+            share_symptoms_moods: true,
+            share_birth_control: true,
+            share_pregnancy_tests: true,
+            share_sexual_activity: true,
+        });
+        let payload_enc = generate_filtered_payload_internal(1000, Some(sample_bc.clone()), sample_entries.clone(), partner_id, &key_b64);
+        let decrypted: SyncPayload = serde_json::from_str(&decrypt_payload_internal(&payload_enc, partner_id, &key_bytes).unwrap()).unwrap();
+        assert_eq!(decrypted.entries[0].intensity, 1, "Flow intensity > 0 must be clamped to 1");
+        assert_eq!(decrypted.entries[1].intensity, 0, "Zero flow intensity must remain 0");
+
+        // 3. share_symptoms_moods == false: notes, symptoms, and painLevel scrubbed
+        save_partner_permissions_internal(PartnerPermissions {
+            share_cycle_phase: true,
+            share_flow_intensity: true,
+            share_symptoms_moods: false,
+            share_birth_control: true,
+            share_pregnancy_tests: true,
+            share_sexual_activity: true,
+        });
+        let payload_enc = generate_filtered_payload_internal(1000, Some(sample_bc.clone()), sample_entries.clone(), partner_id, &key_b64);
+        let decrypted: SyncPayload = serde_json::from_str(&decrypt_payload_internal(&payload_enc, partner_id, &key_bytes).unwrap()).unwrap();
+        assert!(decrypted.entries[0].notes.is_none(), "Notes must be scrubbed when share_symptoms_moods=false");
+        assert!(decrypted.entries[0].symptoms.is_none(), "Symptoms must be scrubbed");
+        assert!(decrypted.entries[0].pain_level.is_none(), "Pain level must be scrubbed");
+
+        // 4. share_pregnancy_tests == false: Pregnancy test notes scrubbed, harmless notes kept
+        save_partner_permissions_internal(PartnerPermissions {
+            share_cycle_phase: true,
+            share_flow_intensity: true,
+            share_symptoms_moods: true,
+            share_birth_control: true,
+            share_pregnancy_tests: false,
+            share_sexual_activity: true,
+        });
+        let payload_enc = generate_filtered_payload_internal(1000, Some(sample_bc.clone()), sample_entries.clone(), partner_id, &key_b64);
+        let decrypted: SyncPayload = serde_json::from_str(&decrypt_payload_internal(&payload_enc, partner_id, &key_bytes).unwrap()).unwrap();
+        assert!(decrypted.entries[0].notes.is_none(), "Pregnancy test note must be redacted");
+        assert_eq!(decrypted.entries[1].notes, Some("Normal day, feeling good".to_string()), "Harmless note must remain");
+
+        // 5. share_sexual_activity == false: sexualRelations scrubbed
+        save_partner_permissions_internal(PartnerPermissions {
+            share_cycle_phase: true,
+            share_flow_intensity: true,
+            share_symptoms_moods: true,
+            share_birth_control: true,
+            share_pregnancy_tests: true,
+            share_sexual_activity: false,
+        });
+        let payload_enc = generate_filtered_payload_internal(1000, Some(sample_bc.clone()), sample_entries.clone(), partner_id, &key_b64);
+        let decrypted: SyncPayload = serde_json::from_str(&decrypt_payload_internal(&payload_enc, partner_id, &key_bytes).unwrap()).unwrap();
+        assert!(decrypted.entries[0].sexual_relations.is_none(), "Sexual activity must be redacted");
+
+        // 6. share_birth_control == false: birth_control is None (Redacted)
+        save_partner_permissions_internal(PartnerPermissions {
+            share_cycle_phase: true,
+            share_flow_intensity: true,
+            share_symptoms_moods: true,
+            share_birth_control: false,
+            share_pregnancy_tests: true,
+            share_sexual_activity: true,
+        });
+        let payload_enc = generate_filtered_payload_internal(1000, Some(sample_bc), sample_entries.clone(), partner_id, &key_b64);
+        let decrypted: SyncPayload = serde_json::from_str(&decrypt_payload_internal(&payload_enc, partner_id, &key_bytes).unwrap()).unwrap();
+        assert!(decrypted.birth_control.is_none(), "Birth control must be None (Redacted)");
+
+        // 7. share_cycle_phase == false: entire entries list emptied, last_updated reset to 0
+        save_partner_permissions_internal(PartnerPermissions {
+            share_cycle_phase: false,
+            share_flow_intensity: true,
+            share_symptoms_moods: true,
+            share_birth_control: true,
+            share_pregnancy_tests: true,
+            share_sexual_activity: true,
+        });
+        let payload_enc = generate_filtered_payload_internal(1000, None, sample_entries, partner_id, &key_b64);
+        let decrypted: SyncPayload = serde_json::from_str(&decrypt_payload_internal(&payload_enc, partner_id, &key_bytes).unwrap()).unwrap();
+        assert_eq!(decrypted.last_updated, 0);
+        assert!(decrypted.entries.is_empty(), "Entries must be empty when share_cycle_phase=false");
+    }
+
+    #[test]
+    fn test_scenario_c_sync_encryption_roundtrip_and_tampering() {
+        let key_bytes = [0x5au8; 32];
+        let key_b64 = general_purpose::STANDARD.encode(key_bytes);
+        let payload = r#"{"test":"secret_cycle_data","version":1}"#;
+
+        // 1. Valid Round-trip
+        let encrypted = encrypt_for_sync_internal(payload, &key_b64).expect("Encryption should succeed");
+        let decrypted = decrypt_from_sync_internal(&encrypted, &key_b64).expect("Decryption should succeed");
+        assert_eq!(decrypted, payload);
+
+        // 2. Wrong Key Failure
+        let wrong_key_bytes = [0x5bu8; 32];
+        let wrong_key_b64 = general_purpose::STANDARD.encode(wrong_key_bytes);
+        let fail_wrong_key = decrypt_from_sync_internal(&encrypted, &wrong_key_b64);
+        assert!(fail_wrong_key.is_none(), "Decryption with wrong key must fail");
+
+        // 3. Corrupted Ciphertext (flip bits in body)
+        let mut raw_bytes = general_purpose::STANDARD.decode(&encrypted).unwrap();
+        let last_idx = raw_bytes.len() - 1;
+        raw_bytes[last_idx] ^= 0xFF; // tamper Poly1305 MAC or ciphertext
+        let tampered_b64 = general_purpose::STANDARD.encode(&raw_bytes);
+        let fail_tampered = decrypt_from_sync_internal(&tampered_b64, &key_b64);
+        assert!(fail_tampered.is_none(), "Decryption with tampered ciphertext must fail Poly1305 MAC");
+
+        // 4. Truncated Ciphertext (< 24 bytes nonce)
+        let truncated = general_purpose::STANDARD.encode(&raw_bytes[0..10]);
+        assert!(decrypt_from_sync_internal(&truncated, &key_b64).is_none());
+
+        // 5. Invalid Base64 strings
+        assert!(decrypt_from_sync_internal("not-valid-base64!@#$", &key_b64).is_none());
+        assert!(decrypt_from_sync_internal("", &key_b64).is_none());
+
+        // 6. Invalid Key length (!= 32 bytes)
+        let short_key_b64 = general_purpose::STANDARD.encode([1u8; 16]);
+        assert!(encrypt_for_sync_internal(payload, &short_key_b64).is_none());
+        assert!(decrypt_from_sync_internal(&encrypted, &short_key_b64).is_none());
+    }
+
+    #[test]
+    fn test_scenario_c_pin_argon2id_and_biometric_auth() {
+        let _lock = TEST_MUTEX.lock().unwrap();
+        let pin = "1234";
+        let wrong_pin = "4321";
+        let salt = [0x11u8; 16];
+
+        // 1. PIN Hashing with Argon2id
+        let hash_bytes = generate_pin_hash_internal(pin);
+        assert!(!hash_bytes.is_empty(), "Argon2id hash must not be empty");
+        let hash_str = std::str::from_utf8(&hash_bytes).unwrap();
+        assert!(hash_str.starts_with("$argon2id$"), "Hash must follow Argon2id PHC format");
+
+        // 2. Verify and Unlock with correct PIN and derivation salt
+        let success = verify_and_unlock_internal(&hash_bytes, pin, &salt);
+        assert!(success, "Correct PIN must successfully unlock");
+        {
+            let guard = MASTER_KEY.lock().unwrap();
+            assert!(guard.is_some(), "MASTER_KEY must be populated after successful unlock");
+            assert_eq!(guard.as_ref().unwrap().len(), 32, "Derived key must be 32 bytes");
+        }
+
+        // 3. Verify and Unlock with WRONG PIN
+        let fail = verify_and_unlock_internal(&hash_bytes, wrong_pin, &salt);
+        assert!(!fail, "Wrong PIN must fail to unlock");
+
+        // 4. Legacy derivation path (empty salt)
+        let success_legacy = verify_and_unlock_internal(&hash_bytes, pin, &[]);
+        assert!(success_legacy, "Empty salt must trigger backward-compatible legacy key derivation");
+
+        // 5. Lock Database
+        lock_database_internal();
+        {
+            let guard = MASTER_KEY.lock().unwrap();
+            assert!(guard.is_none(), "MASTER_KEY must be None after lock_database_internal");
+        }
+
+        // 6. Unlock with Biometric
+        let bio_key = [0xaau8; 32];
+        let bio_success = unlock_with_biometric_internal(&bio_key);
+        assert!(bio_success, "Valid 32-byte biometric key must succeed");
+        {
+            let guard = MASTER_KEY.lock().unwrap();
+            assert_eq!(guard.as_ref().unwrap().as_slice(), &bio_key, "MASTER_KEY must match biometric key");
+        }
+
+        // Biometric unlock with invalid length (< 32 bytes)
+        let invalid_bio_key = [0xaau8; 16];
+        let bio_fail = unlock_with_biometric_internal(&invalid_bio_key);
+        assert!(!bio_fail, "Invalid key length for biometric unlock must fail");
+
+        // Lock again to clean up state
+        lock_database_internal();
+        assert!(MASTER_KEY.lock().unwrap().is_none());
+    }
 }

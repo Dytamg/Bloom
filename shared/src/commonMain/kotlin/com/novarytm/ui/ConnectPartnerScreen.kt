@@ -159,8 +159,8 @@ fun ConnectPartnerScreen(
                                 val timestamp = timestampStr.toLongOrNull()
                                 val now = Clock.System.now().toEpochMilliseconds()
                                 
-                                // 5 minutes (with clock skew protection)
-                                if (timestamp != null && kotlin.math.abs(now - timestamp) <= SYNC_CODE_EXPIRATION_MS) {
+                                // 5 minutes (with asymmetric clock skew protection: up to 60s future skew)
+                                if (timestamp != null && (now - timestamp) in -60_000L..SYNC_CODE_EXPIRATION_MS) {
                                     syncCodeAttempts = 0
                                     val keyBytes = Base64.Default.decode(encryptionKeyBase64)
                                         
