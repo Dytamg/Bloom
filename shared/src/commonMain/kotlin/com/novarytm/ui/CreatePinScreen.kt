@@ -21,6 +21,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
 import com.novarytm.ffi.RustBridge
 
 @Composable
@@ -65,7 +67,11 @@ fun CreatePinScreen(
         // PIN Indicators
         Row(
             horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.clearAndSetSemantics {
+                contentDescription = "${currentEntryBytes.size} digits entered"
+                liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite
+            }
         ) {
             val totalDots = if (step == 0) currentEntryBytes.size.coerceAtLeast(4).coerceAtMost(8) else firstEntryBytes.size
             for (i in 0 until totalDots) {
@@ -189,7 +195,7 @@ fun CreatePinScreen(
                             } else {
                                 Text(
                                     key,
-                                    modifier = Modifier.clearAndSetSemantics { contentDescription = if (key == "OK") "Submit" else "PIN digit" },
+                                    modifier = Modifier.clearAndSetSemantics { contentDescription = if (key == "OK") "Submit" else key },
                                     style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold), 
                                     color = if (key == "OK") Color.White else Color(0xFF3E3636)
                                 )

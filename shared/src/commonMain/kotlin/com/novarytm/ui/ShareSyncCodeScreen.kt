@@ -186,7 +186,7 @@ fun ShareSyncCodeScreen(
                         showCopiedToast = true
                         // VULN-06 FIX: Auto-clear clipboard after 60s to limit secret key exposure
                         // Bind to application-level scope so it survives screen dismissal
-                        syncManager?.scope?.launch {
+                        (syncManager?.scope ?: kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default)).launch {
                             kotlinx.coroutines.delay(60_000)
                             storage.copyToClipboardSecurely("")
                         }
@@ -242,12 +242,13 @@ fun ShareSyncCodeScreen(
                         modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
                         singleLine = true
                     )
+                    val isEmailValid = Regex("^[A-Za-z0-9+_.-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$").matches(partnerEmail.trim())
                     Button(
                         onClick = { performSignInAndUpload() },
                         modifier = Modifier.fillMaxWidth().height(56.dp),
                         shape = RoundedCornerShape(16.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = primaryColor),
-                        enabled = partnerEmail.isNotBlank() && partnerEmail.contains("@")
+                        enabled = isEmailValid
                     ) {
                         Text(AppStrings.get("sign_in_button"), style = MaterialTheme.typography.titleMedium)
                     }

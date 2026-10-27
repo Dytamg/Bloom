@@ -22,6 +22,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import org.jetbrains.compose.resources.painterResource
@@ -88,6 +90,7 @@ fun LockScreen(
         while (Clock.System.now().toEpochMilliseconds() < lockoutUntilMs) {
             currentTimeMs = Clock.System.now().toEpochMilliseconds()
             kotlinx.coroutines.delay(1000)
+            lockoutUntilMs = storage.getPinLockoutUntil()
         }
         currentTimeMs = Clock.System.now().toEpochMilliseconds()
     }
@@ -141,6 +144,8 @@ fun LockScreen(
                 if (success) {
                     storage.saveFailedPinAttempts(0)
                     storage.savePinLockoutUntil(0L)
+                    failedAttempts = 0
+                    lockoutUntilMs = 0L
                     isUnlocked = true
                 } else {
                     authError = "Biometric unlock failed. Please use PIN."
@@ -226,7 +231,11 @@ fun LockScreen(
         // PIN Indicators
         Row(
             horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.clearAndSetSemantics {
+                contentDescription = "${enteredPinBytes.size} digits entered"
+                liveRegion = androidx.compose.ui.semantics.LiveRegionMode.Polite
+            }
         ) {
             val totalDots = enteredPinBytes.size.coerceAtLeast(4).coerceAtMost(8)
             for (i in 0 until totalDots) {
@@ -271,7 +280,7 @@ fun LockScreen(
                                         "del" -> "Delete"
                                         "bio" -> "Biometric"
                                         "OK" -> "Submit"
-                                        else -> "PIN Key"
+                                        else -> key
                                     }
                                 }
                                 .clickable {

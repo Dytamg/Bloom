@@ -340,8 +340,8 @@ fun AppContent(
     var editingEntry by remember { mutableStateOf<CycleEntry?>(null) }
     var editingEndDate by remember { mutableStateOf<String?>(null) }
     var showStepUpPinScreen by remember { mutableStateOf(false) }
-    var stepUpFailedAttempts by remember { mutableStateOf(0) }
-    var stepUpLockedUntil by remember { mutableStateOf(0L) }
+    var stepUpFailedAttempts by remember { mutableStateOf(storage.getFailedPinAttempts()) }
+    var stepUpLockedUntil by remember { mutableStateOf(storage.getPinLockoutUntil()) }
     LaunchedEffect(stepUpFallbackTrigger) {
         if (stepUpFallbackTrigger > 0) {
             showStepUpPinScreen = true
@@ -457,6 +457,8 @@ fun AppContent(
             }
 
             if (showStepUpPinScreen) {
+                stepUpLockedUntil = storage.getPinLockoutUntil()
+                stepUpFailedAttempts = storage.getFailedPinAttempts()
                 val stepUpNow = Clock.System.now().toEpochMilliseconds()
                 if (stepUpFailedAttempts >= 5 && stepUpNow < stepUpLockedUntil) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -472,13 +474,17 @@ fun AppContent(
                     pinHash = storage.getPinHash(),
                     onUnlocked = {
                         stepUpFailedAttempts = 0
+                        storage.saveFailedPinAttempts(0)
+                        storage.savePinLockoutUntil(0L)
                         showStepUpPinScreen = false
                         onScreenChange(Screen.PartnerPermissions)
                     },
                     onReset = {
                         stepUpFailedAttempts++
+                        storage.saveFailedPinAttempts(stepUpFailedAttempts)
                         if (stepUpFailedAttempts >= 5) {
                             stepUpLockedUntil = Clock.System.now().toEpochMilliseconds() + 30_000L
+                            storage.savePinLockoutUntil(stepUpLockedUntil)
                         }
                         showStepUpPinScreen = false
                     }
@@ -611,7 +617,7 @@ fun AppContent(
                                 )
                                 IconButton(
                                     onClick = { syncManager?.clearSyncStatus() },
-                                    modifier = Modifier.size(24.dp)
+                                    modifier = Modifier.size(48.dp)
                                 ) {
                                     Icon(Icons.Default.Close, contentDescription = "Dismiss", tint = Color(0xFF856404), modifier = Modifier.size(16.dp))
                                 }

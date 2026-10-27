@@ -99,6 +99,10 @@ fun RecoveryKeyWarningScreen(
                             kotlinx.coroutines.delay(3000)
                             showCopied = false
                         }
+                        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).launch {
+                            kotlinx.coroutines.delay(60_000)
+                            storage.copyToClipboardSecurely("")
+                        }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = primaryColor.copy(alpha = 0.15f)),
                     shape = RoundedCornerShape(12.dp),

@@ -13,6 +13,7 @@ import kotlinx.serialization.encodeToString
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
 import kotlinx.serialization.json.Json
+import kotlinx.datetime.LocalDate
 import com.novarytm.utils.AppJson
 import app.cash.sqldelight.coroutines.asFlow
 import app.cash.sqldelight.coroutines.mapToList
@@ -34,6 +35,16 @@ class SyncManager(
     private val syncAttemptTimestamps = mutableListOf<Long>()
     private val _syncStatusMessage = MutableStateFlow<String?>(null)
     val syncStatusMessage: StateFlow<String?> = _syncStatusMessage.asStateFlow()
+
+    private fun isValidCalendarDate(dateStr: String, regex: Regex): Boolean {
+        if (!regex.matches(dateStr)) return false
+        return try {
+            LocalDate.parse(dateStr)
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
 
     fun clearSyncStatus() {
         _syncStatusMessage.value = null
@@ -94,11 +105,22 @@ class SyncManager(
             val pts = queries.selectAllPregnancyTests().executeAsList()
             val reminders = queries.selectAllReminders().executeAsList()
             
-            val filteredEntries = if (!permissions.shareCyclePhase && !permissions.shareFlowIntensity && !permissions.shareSymptomsMoods) {
+            val filteredEntries = if (!permissions.shareCyclePhase) {
                 emptyList()
             } else {
                 entries.map { 
                     val originalIntensity = it.intensity?.toInt() ?: 0
+                    val rawNotes = if (permissions.shareSymptomsMoods) it.notes else null
+                    val safeNotes = if (rawNotes != null && !permissions.sharePregnancyTests) {
+                        val lower = rawNotes.lowercase()
+                        if (lower.contains("pregnan") || lower.contains("hcg") || lower.contains("positive") || lower.contains("negative")) {
+                            null
+                        } else {
+                            rawNotes
+                        }
+                    } else {
+                        rawNotes
+                    }
                     SyncEntry(
                         date = it.date, 
                         intensity = when {
@@ -106,7 +128,7 @@ class SyncManager(
                             permissions.shareCyclePhase && originalIntensity > 0 -> 1
                             else -> 0
                         }, 
-                        notes = if (permissions.shareSymptomsMoods) it.notes else null,
+                        notes = safeNotes,
                         sexualRelations = if (permissions.shareSexualActivity) it.sexualRelations else null,
                         painLevel = if (permissions.shareSymptomsMoods) it.painLevel?.toInt() else null,
                         symptoms = if (permissions.shareSymptomsMoods) it.symptoms else null
@@ -114,12 +136,20 @@ class SyncManager(
                 }
             }
 
+            val filteredReminders = reminders.filter { rm ->
+                if (rm.type.equals("Pregnancy Test", ignoreCase = true)) {
+                    permissions.sharePregnancyTests
+                } else {
+                    permissions.shareBirthControl
+                }
+            }.map { SyncReminder(it.type, it.frequency, it.timeOfDay, it.nextDate, it.isActive ?: true) }
+
             val payloadObj = SyncPayload(
                 lastUpdated = Clock.System.now().toEpochMilliseconds(),
                 birthControl = if (permissions.shareBirthControl) bc?.let { SyncBirthControl(it.type, it.isActive ?: true) } else null,
                 entries = filteredEntries,
                 pregnancyTests = if (permissions.sharePregnancyTests) pts.map { SyncPregnancyTest(it.date, it.result) } else emptyList(),
-                reminders = if (permissions.shareBirthControl) reminders.map { SyncReminder(it.type, it.frequency, it.timeOfDay, it.nextDate, it.isActive ?: true) } else emptyList(),
+                reminders = filteredReminders,
                 permissions = permissions
             )
             val fullJson = AppJson.encodeToString(payloadObj)
@@ -243,11 +273,11 @@ class SyncManager(
             )
 
             val validatedEntries = payload.entries.mapNotNull { entry ->
-                if (dateRegex.matches(entry.date)) {
+                if (isValidCalendarDate(entry.date, dateRegex)) {
                     val validIntensity = entry.intensity.coerceIn(0, 5)
                     val validPainLevel = entry.painLevel?.coerceIn(0, 10)
-                    val cleanNotes = entry.notes?.replace(Regex("<[^>]*>"), "")?.take(500)?.trim()
-                    val cleanSymptoms = entry.symptoms?.replace(Regex("<[^>]*>"), "")?.take(200)?.trim()
+                    val cleanNotes = entry.notes?.take(500)?.replace(Regex("<[^>]*>"), "")?.trim()
+                    val cleanSymptoms = entry.symptoms?.take(200)?.replace(Regex("<[^>]*>"), "")?.trim()
                     ValidatedEntry(entry.date, validIntensity, cleanNotes, entry.sexualRelations?.take(50), validPainLevel, cleanSymptoms)
                 } else null
             }
@@ -256,7 +286,7 @@ class SyncManager(
             }
 
             val validatedTests = payload.pregnancyTests.mapNotNull { pt ->
-                if (dateRegex.matches(pt.date)) {
+                if (isValidCalendarDate(pt.date, dateRegex)) {
                     ValidatedPregnancyTest(pt.date, pt.result.take(100))
                 } else null
             }
@@ -265,7 +295,7 @@ class SyncManager(
             }
 
             val validatedReminders = payload.reminders.map { rm ->
-                val validNext = if (rm.nextDate != null && dateRegex.matches(rm.nextDate)) rm.nextDate else null
+                val validNext = if (rm.nextDate != null && isValidCalendarDate(rm.nextDate, dateRegex)) rm.nextDate else null
                 ValidatedReminder(rm.type.take(50), rm.frequency.take(50), rm.timeOfDay?.take(50), validNext, rm.isActive)
             }
             

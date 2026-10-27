@@ -194,30 +194,28 @@ pub fn verify_and_unlock_internal(pin_hash: &[u8], input_pin: &str, derivation_s
     };
     
     if Argon2::default().verify_password(input_pin.as_bytes(), &parsed_hash).is_ok() {
-        // VULN-02 FIX: Recover from poisoned mutex instead of panicking across JNI
-        let mut key = MASTER_KEY.lock().unwrap_or_else(|e| e.into_inner());
-        // VULN-01 FIX: Use Argon2id if salt provided, legacy BLAKE3 for pre-existing users
-        let mut derived = if derivation_salt.is_empty() {
-            derive_key_legacy(input_pin)
-        } else {
+        if !derivation_salt.is_empty() {
             match derive_key_secure(input_pin, derivation_salt) {
-                Ok(k) => k,
-                Err(_) => return false,
+                Ok(mut k) => {
+                    k.zeroize();
+                    true
+                }
+                Err(_) => false,
             }
-        };
-        *key = Some(Zeroizing::new(derived.to_vec()));
-        derived.zeroize();
-        true
+        } else {
+            let mut k = derive_key_legacy(input_pin);
+            k.zeroize();
+            true
+        }
     } else {
         false
     }
 }
 
 pub fn unlock_with_biometric_internal(key_bytes: &[u8]) -> bool {
-    if key_bytes.len() != 32 { return false; }
-    // VULN-02 FIX: Recover from poisoned mutex instead of panicking across JNI
-    let mut key = MASTER_KEY.lock().unwrap_or_else(|e| e.into_inner());
-    *key = Some(Zeroizing::new(key_bytes.to_vec()));
+    if key_bytes.len() != 32 || key_bytes.iter().all(|&b| b == 0) {
+        return false;
+    }
     true
 }
 
@@ -374,6 +372,24 @@ pub fn generate_random_key_internal() -> Zeroizing<Vec<u8>> {
     vec
 }
 
+// Safe JNI helper functions to prevent ART CheckJNI aborts on null pointers (VULN-FFI-01)
+fn jstring_to_string(env: &mut JNIEnv, s: &JString) -> String {
+    if s.is_null() {
+        return String::new();
+    }
+    match env.get_string(s) {
+        Ok(javastr) => javastr.into(),
+        Err(_) => String::new(),
+    }
+}
+
+fn jbytearray_to_vec(env: &JNIEnv, arr: &JByteArray) -> Vec<u8> {
+    if arr.is_null() {
+        return Vec::new();
+    }
+    env.convert_byte_array(arr).unwrap_or_default()
+}
+
 // JNI Wrappers
 #[no_mangle]
 pub extern "system" fn Java_com_novarytm_ffi_RustBridge_calculate_1cycle_1phase(
@@ -383,7 +399,7 @@ pub extern "system" fn Java_com_novarytm_ffi_RustBridge_calculate_1cycle_1phase(
     avg_cycle_length: i32,
 ) -> jstring {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let date_str: String = match env.get_string(&last_period_date) { Ok(s) => s.into(), Err(_) => "".to_string() };
+        let date_str = jstring_to_string(&mut env, &last_period_date);
         let today = chrono::Local::now().date_naive();
         let phase = calculate_phase_internal(&date_str, avg_cycle_length, today);
         match env.new_string(phase) {
@@ -401,7 +417,7 @@ pub extern "system" fn Java_com_novarytm_ffi_RustBridge_predict_1next_1period(
     avg_cycle_length: i32,
 ) -> jstring {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let date_str: String = match env.get_string(&last_period_date) { Ok(s) => s.into(), Err(_) => "".to_string() };
+        let date_str = jstring_to_string(&mut env, &last_period_date);
         let next_period = predict_next_period_internal(&date_str, avg_cycle_length);
         match env.new_string(next_period) {
             Ok(s) => s.into_raw(),
@@ -417,10 +433,7 @@ pub extern "system" fn Java_com_novarytm_ffi_RustBridge_analyze_1cycle_1history(
     dates_csv: JString,
 ) -> jstring {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let dates_str: String = match env.get_string(&dates_csv) {
-            Ok(s) => s.into(),
-            Err(_) => "".to_string(),
-        };
+        let dates_str = jstring_to_string(&mut env, &dates_csv);
         let result = analyze_cycle_history_internal(&dates_str);
         match env.new_string(result) {
             Ok(s) => s.into_raw(),
@@ -436,7 +449,7 @@ pub extern "system" fn Java_com_novarytm_ffi_RustBridge_generate_1pin_1hash(
     pin: JByteArray,
 ) -> jbyteArray {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let pin_bytes = Zeroizing::new(env.convert_byte_array(&pin).unwrap_or_default());
+        let pin_bytes = Zeroizing::new(jbytearray_to_vec(&env, &pin));
         let hash_bytes = Zeroizing::new(if let Ok(pin_str) = std::str::from_utf8(&pin_bytes) {
             generate_pin_hash_internal(pin_str)
         } else { vec![] });
@@ -456,9 +469,9 @@ pub extern "system" fn Java_com_novarytm_ffi_RustBridge_verify_1and_1unlock(
     derivation_salt: JByteArray,
 ) -> jboolean {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let hash_bytes = Zeroizing::new(env.convert_byte_array(&pin_hash).unwrap_or_default());
-        let pin_bytes = Zeroizing::new(env.convert_byte_array(&input_pin).unwrap_or_default());
-        let salt_bytes = Zeroizing::new(env.convert_byte_array(&derivation_salt).unwrap_or_default());
+        let hash_bytes = Zeroizing::new(jbytearray_to_vec(&env, &pin_hash));
+        let pin_bytes = Zeroizing::new(jbytearray_to_vec(&env, &input_pin));
+        let salt_bytes = Zeroizing::new(jbytearray_to_vec(&env, &derivation_salt));
         let result = if let Ok(pin_str) = std::str::from_utf8(&pin_bytes) {
             verify_and_unlock_internal(&hash_bytes, pin_str, &salt_bytes)
         } else { false };
@@ -474,18 +487,27 @@ pub extern "system" fn Java_com_novarytm_ffi_RustBridge_derive_1key(
     derivation_salt: JByteArray,
 ) -> jbyteArray {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let pin_bytes = Zeroizing::new(env.convert_byte_array(&pin).unwrap_or_default());
-        let salt_bytes = Zeroizing::new(env.convert_byte_array(&derivation_salt).unwrap_or_default());
-        let key = Zeroizing::new(if let Ok(pin_str) = std::str::from_utf8(&pin_bytes) {
-            if salt_bytes.is_empty() {
-                derive_key_legacy(pin_str)
-            } else {
-                derive_key_secure(pin_str, &salt_bytes).unwrap_or([0u8; 32])
+        let pin_bytes = Zeroizing::new(jbytearray_to_vec(&env, &pin));
+        let salt_bytes = Zeroizing::new(jbytearray_to_vec(&env, &derivation_salt));
+        let key_opt: Option<Zeroizing<[u8; 32]>> = match std::str::from_utf8(&pin_bytes) {
+            Ok(pin_str) if !pin_str.is_empty() => {
+                if salt_bytes.is_empty() {
+                    Some(Zeroizing::new(derive_key_legacy(pin_str)))
+                } else {
+                    derive_key_secure(pin_str, &salt_bytes).ok().map(Zeroizing::new)
+                }
             }
-        } else { [0u8; 32] });
-        match env.byte_array_from_slice(key.as_slice()) {
-            Ok(arr) => arr.into_raw(),
-            Err(_) => std::ptr::null_mut() as jbyteArray,
+            _ => None,
+        };
+        match key_opt {
+            Some(key) => match env.byte_array_from_slice(key.as_slice()) {
+                Ok(arr) => arr.into_raw(),
+                Err(_) => std::ptr::null_mut() as jbyteArray,
+            },
+            None => match env.byte_array_from_slice(&[]) {
+                Ok(arr) => arr.into_raw(),
+                Err(_) => std::ptr::null_mut() as jbyteArray,
+            },
         }
     })).unwrap_or(std::ptr::null_mut() as jbyteArray)
 }
@@ -497,7 +519,7 @@ pub extern "system" fn Java_com_novarytm_ffi_RustBridge_unlock_1with_1biometric(
     key_bytes: JByteArray,
 ) -> jboolean {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let bytes = Zeroizing::new(env.convert_byte_array(&key_bytes).unwrap_or_default());
+        let bytes = Zeroizing::new(jbytearray_to_vec(&env, &key_bytes));
         let result = unlock_with_biometric_internal(&bytes);
         if result { 1 } else { 0 }
     })).unwrap_or(0)
@@ -564,13 +586,13 @@ pub extern "system" fn Java_com_novarytm_ffi_RustBridge_generate_1filtered_1payl
 ) -> jbyteArray {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let bc_str: Option<String> = if !birth_control_json.is_null() {
-            Some(match env.get_string(&birth_control_json) { Ok(s) => s.into(), Err(_) => "".to_string() })
+            Some(jstring_to_string(&mut env, &birth_control_json))
         } else {
             None
         };
-        let entries_str: String = match env.get_string(&entries_json) { Ok(s) => s.into(), Err(_) => "".to_string() };
-        let id_str: String = match env.get_string(&partner_id) { Ok(s) => s.into(), Err(_) => "".to_string() };
-        let key_str = Zeroizing::new(match env.get_string(&shared_key_base64) { Ok(s) => s.into(), Err(_) => "".to_string() });
+        let entries_str = jstring_to_string(&mut env, &entries_json);
+        let id_str = jstring_to_string(&mut env, &partner_id);
+        let key_str = Zeroizing::new(jstring_to_string(&mut env, &shared_key_base64));
         let result = generate_filtered_payload_internal(last_updated, bc_str, entries_str, &id_str, &key_str);
         match env.byte_array_from_slice(&result) {
             Ok(arr) => arr.into_raw(),
@@ -588,9 +610,9 @@ pub extern "system" fn Java_com_novarytm_ffi_RustBridge_decrypt_1payload(
     shared_key_base64: JString,
 ) -> jstring {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let data_bytes = env.convert_byte_array(&encrypted_data).unwrap_or_default();
-        let id_str: String = match env.get_string(&partner_id) { Ok(s) => s.into(), Err(_) => "".to_string() };
-        let key_str = Zeroizing::new(match env.get_string(&shared_key_base64) { Ok(s) => s.into(), Err(_) => "".to_string() });
+        let data_bytes = jbytearray_to_vec(&env, &encrypted_data);
+        let id_str = jstring_to_string(&mut env, &partner_id);
+        let key_str = Zeroizing::new(jstring_to_string(&mut env, &shared_key_base64));
         use base64::{Engine as _, engine::general_purpose};
         let secret_key = Zeroizing::new(general_purpose::STANDARD.decode(&*key_str).unwrap_or_default());
         let result = decrypt_payload_internal(&data_bytes, &id_str, &secret_key).unwrap_or_default();
@@ -675,7 +697,7 @@ pub fn calculate_next_cycle_native_internal(history_json: &str) -> String {
         let diff = (dates[i] - dates[i-1]).num_days() as i32;
         if diff >= 1 && diff <= 3 {
             current_duration += diff;
-        } else if diff > 7 {
+        } else {
             period_durations.push(current_duration);
             current_duration = 1;
         }
@@ -710,35 +732,50 @@ pub fn calculate_next_cycle_native_internal(history_json: &str) -> String {
         
         // Expected period (assumes standard 5 days length for UI dotted rings)
         for j in 0..avg_period_duration {
-            expected_period_days.push((start + chrono::Duration::days(j as i64)).format("%Y-%m-%d").to_string());
+            if let Some(d) = start.checked_add_signed(chrono::Duration::days(j as i64)) {
+                expected_period_days.push(d.format("%Y-%m-%d").to_string());
+            }
         }
 
         // Fertile window: ~14 days before the start of the next cycle
         let next_start = if i + 1 < cycle_starts.len() {
-            cycle_starts[i + 1]
+            Some(cycle_starts[i + 1])
         } else {
-            start + chrono::Duration::days(avg_length)
+            start.checked_add_signed(chrono::Duration::days(avg_length))
         };
 
-        let ovulation_day = next_start - chrono::Duration::days(14);
-        for j in -2..=2 {
-            fertile_window.push((ovulation_day + chrono::Duration::days(j as i64)).format("%Y-%m-%d").to_string());
+        if let Some(ns) = next_start {
+            if let Some(ovulation_day) = ns.checked_sub_signed(chrono::Duration::days(14)) {
+                for j in -2..=2 {
+                    if let Some(d) = ovulation_day.checked_add_signed(chrono::Duration::days(j as i64)) {
+                        fertile_window.push(d.format("%Y-%m-%d").to_string());
+                    }
+                }
+            }
         }
     }
 
     // 2. Predict future cycles from the current cycle forward
     for cycle_idx in 1..=3 {
-        let cycle_start = last_period_start + chrono::Duration::days(avg_length.saturating_mul(cycle_idx));
+        let cycle_start = last_period_start.checked_add_signed(chrono::Duration::days(avg_length.saturating_mul(cycle_idx)));
         
-        for i in 0..avg_period_duration {
-            expected_period_days.push((cycle_start + chrono::Duration::days(i as i64)).format("%Y-%m-%d").to_string());
+        if let Some(cs) = cycle_start {
+            for i in 0..avg_period_duration {
+                if let Some(d) = cs.checked_add_signed(chrono::Duration::days(i as i64)) {
+                    expected_period_days.push(d.format("%Y-%m-%d").to_string());
+                }
+            }
         }
 
-        let next_cycle_start = last_period_start + chrono::Duration::days(avg_length.saturating_mul(cycle_idx + 1));
-        let ovulation_day = next_cycle_start - chrono::Duration::days(14);
-        
-        for i in -2..=2 {
-            fertile_window.push((ovulation_day + chrono::Duration::days(i as i64)).format("%Y-%m-%d").to_string());
+        let next_cycle_start = last_period_start.checked_add_signed(chrono::Duration::days(avg_length.saturating_mul(cycle_idx + 1)));
+        if let Some(ncs) = next_cycle_start {
+            if let Some(ovulation_day) = ncs.checked_sub_signed(chrono::Duration::days(14)) {
+                for i in -2..=2 {
+                    if let Some(d) = ovulation_day.checked_add_signed(chrono::Duration::days(i as i64)) {
+                        fertile_window.push(d.format("%Y-%m-%d").to_string());
+                    }
+                }
+            }
         }
     }
 
@@ -763,10 +800,7 @@ pub extern "system" fn Java_com_novarytm_ffi_RustBridge_calculateNextCycleNative
     history_json: JString,
 ) -> jstring {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let history_str: String = match env.get_string(&history_json) {
-            Ok(s) => s.into(),
-            Err(_) => "".to_string(),
-        };
+        let history_str = jstring_to_string(&mut env, &history_json);
         let result = calculate_next_cycle_native_internal(&history_str);
         match env.new_string(result) {
             Ok(s) => s.into_raw(),
@@ -828,8 +862,8 @@ pub extern "system" fn Java_com_novarytm_ffi_RustBridge_encrypt_1for_1sync(
     shared_key_base64: JString,
 ) -> jstring {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let payload: String = match env.get_string(&payload_json) { Ok(s) => s.into(), Err(_) => "".to_string() };
-        let key = Zeroizing::new(match env.get_string(&shared_key_base64) { Ok(s) => s.into(), Err(_) => "".to_string() });
+        let payload = jstring_to_string(&mut env, &payload_json);
+        let key = Zeroizing::new(jstring_to_string(&mut env, &shared_key_base64));
         
         let result = encrypt_for_sync_internal(&payload, &key).unwrap_or_default();
         match env.new_string(result) {
@@ -850,8 +884,8 @@ pub extern "system" fn Java_com_novarytm_ffi_RustBridge_decrypt_1from_1sync(
     shared_key_base64: JString,
 ) -> jstring {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let encrypted: String = match env.get_string(&encrypted_base64) { Ok(s) => s.into(), Err(_) => "".to_string() };
-        let key = Zeroizing::new(match env.get_string(&shared_key_base64) { Ok(s) => s.into(), Err(_) => "".to_string() });
+        let encrypted = jstring_to_string(&mut env, &encrypted_base64);
+        let key = Zeroizing::new(jstring_to_string(&mut env, &shared_key_base64));
         
         let result = decrypt_from_sync_internal(&encrypted, &key).unwrap_or_default();
         match env.new_string(result) {
@@ -1539,8 +1573,7 @@ mod tests {
         assert!(success, "Correct PIN must successfully unlock");
         {
             let guard = MASTER_KEY.lock().unwrap();
-            assert!(guard.is_some(), "MASTER_KEY must be populated after successful unlock");
-            assert_eq!(guard.as_ref().unwrap().len(), 32, "Derived key must be 32 bytes");
+            assert!(guard.is_none(), "MASTER_KEY must not retain duplicate key material in native memory");
         }
 
         // 3. Verify and Unlock with WRONG PIN
@@ -1564,7 +1597,7 @@ mod tests {
         assert!(bio_success, "Valid 32-byte biometric key must succeed");
         {
             let guard = MASTER_KEY.lock().unwrap();
-            assert_eq!(guard.as_ref().unwrap().as_slice(), &bio_key, "MASTER_KEY must match biometric key");
+            assert!(guard.is_none(), "MASTER_KEY must not retain duplicate key material in native memory");
         }
 
         // Biometric unlock with invalid length (< 32 bytes)
@@ -1575,5 +1608,75 @@ mod tests {
         // Lock again to clean up state
         lock_database_internal();
         assert!(MASTER_KEY.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_v15_prediction_engine_u32_overflow_resilience() {
+        // Less than 3 cycles with large u32 values that would overflow sum: u32
+        let large_lengths = vec![u32::MAX / 2 + 10, u32::MAX / 2 + 10];
+        let pred = prediction_engine::predict_irregular_cycle(&large_lengths);
+        assert!(pred.estimated_length_days >= 21 && pred.estimated_length_days <= 45);
+
+        // Even length cycle history with values whose sum would overflow u32 during median calculation
+        let large_even_lengths = vec![
+            u32::MAX / 2 + 5,
+            u32::MAX / 2 + 10,
+            u32::MAX / 2 + 15,
+            u32::MAX / 2 + 20,
+        ];
+        let pred_even = prediction_engine::predict_irregular_cycle(&large_even_lengths);
+        assert!(pred_even.estimated_length_days >= 15 && pred_even.estimated_length_days <= 90);
+    }
+
+    #[test]
+    fn test_v15_biometric_rejects_zero_or_short_key() {
+        // All-zero 32-byte key must be rejected
+        let all_zeros = [0u8; 32];
+        assert!(!unlock_with_biometric_internal(&all_zeros));
+
+        // Short key must be rejected
+        let short_key = [1u8; 16];
+        assert!(!unlock_with_biometric_internal(&short_key));
+
+        let short_key_31 = [1u8; 31];
+        assert!(!unlock_with_biometric_internal(&short_key_31));
+
+        // Empty key must be rejected
+        assert!(!unlock_with_biometric_internal(&[]));
+
+        // Long key must be rejected
+        let long_key = [1u8; 33];
+        assert!(!unlock_with_biometric_internal(&long_key));
+
+        // Valid non-zero 32-byte key must succeed
+        let valid_key = [0x42u8; 32];
+        assert!(unlock_with_biometric_internal(&valid_key));
+    }
+
+    #[test]
+    fn test_v15_period_duration_4_to_7_day_gap() {
+        // Entries with a 5-day gap between two bleeding periods:
+        // Period 1: Jan 1 to Jan 2 (diff = 1)
+        // Gap of 5 days: Jan 2 to Jan 7 (diff = 5, previously skipped by 4..=7 gap bug)
+        // Period 2: Jan 7 to Jan 8 (diff = 1)
+        let history = serde_json::json!([
+            {"date": "2026-01-01", "intensity": 3, "notes": null},
+            {"date": "2026-01-02", "intensity": 2, "notes": null},
+            {"date": "2026-01-07", "intensity": 3, "notes": null},
+            {"date": "2026-01-08", "intensity": 2, "notes": null}
+        ]).to_string();
+
+        let res_json = calculate_next_cycle_native_internal(&history);
+        let v: Value = serde_json::from_str(&res_json).expect("Valid JSON response");
+        let expected_period_days: Vec<String> = v["expectedPeriodDays"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x.as_str().unwrap().to_string())
+            .collect();
+
+        // Ensure calculation succeeds without panic and detects cycle periods properly
+        assert!(!expected_period_days.is_empty());
+        assert!(expected_period_days.contains(&"2026-01-01".to_string()));
     }
 }

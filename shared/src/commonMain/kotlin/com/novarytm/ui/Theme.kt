@@ -24,7 +24,7 @@ val DefaultThemeColors = AppColors(
     background = Color(0xFFFAF8F7),
     surface = Color.White,
     textPrimary = Color.Black,
-    textSecondary = Color.Gray,
+    textSecondary = Color(0xFF5C5C5C),
     todayHighlight = Color(0xFF6D4C41),
     name = "Default"
 )
@@ -37,7 +37,7 @@ val BabyBlueThemeColors = AppColors(
     background = Color(0xFFF6F9FB), // Soft Cool White
     surface = Color.White,
     textPrimary = Color.Black,
-    textSecondary = Color.Gray,
+    textSecondary = Color(0xFF5C5C5C),
     todayHighlight = Color(0xFF546E7A), // Slate Blue
     name = "Baby Blue"
 )

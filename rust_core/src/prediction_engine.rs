@@ -22,8 +22,8 @@ pub fn predict_irregular_cycle(historical_lengths: &[u32]) -> CyclePrediction {
     }
 
     if historical_lengths.len() < 3 {
-        let sum: u32 = historical_lengths.iter().sum();
-        let mean = (sum as f64 / n).round() as u32;
+        let sum: f64 = historical_lengths.iter().map(|&x| x as f64).sum();
+        let mean = (sum / n).round() as u32;
         let estimated = mean.clamp(21, 45);
         let max = *historical_lengths.iter().max().unwrap();
         let min = *historical_lengths.iter().min().unwrap();
@@ -56,7 +56,7 @@ pub fn predict_irregular_cycle(historical_lengths: &[u32]) -> CyclePrediction {
     
     let median = if sorted_lengths.len() % 2 == 0 {
         let mid = sorted_lengths.len() / 2;
-        (sorted_lengths[mid - 1] + sorted_lengths[mid]) as f64 / 2.0
+        (sorted_lengths[mid - 1] as f64 + sorted_lengths[mid] as f64) / 2.0
     } else {
         sorted_lengths[sorted_lengths.len() / 2] as f64
     };

@@ -6,6 +6,7 @@
         <exclude domain="database" path="novarytm.db"/>
         <exclude domain="database" path="novarytm.db-wal"/>
         <exclude domain="database" path="novarytm.db-shm"/>
+        <exclude domain="database" path="novarytm.db-journal"/>
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="secure_prefs.xml"/>
@@ -13,5 +14,6 @@
         <exclude domain="database" path="novarytm.db"/>
         <exclude domain="database" path="novarytm.db-wal"/>
         <exclude domain="database" path="novarytm.db-shm"/>
+        <exclude domain="database" path="novarytm.db-journal"/>
     </device-transfer>
 </data-extraction-rules>

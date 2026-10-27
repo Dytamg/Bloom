@@ -20,6 +20,7 @@ class NotificationReceiver : BroadcastReceiver() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel("bloom_reminders", "Bloom Reminders", NotificationManager.IMPORTANCE_DEFAULT).apply {
                 description = "Reminders for health logs and updates"
+                lockscreenVisibility = android.app.Notification.VISIBILITY_PRIVATE
             }
             notificationManager.createNotificationChannel(channel)
         }
@@ -27,12 +28,23 @@ class NotificationReceiver : BroadcastReceiver() {
         val themePref = com.novarytm.storage.SecureStorageManager(context).getThemePreference()
         val notifColor = if (themePref == "Baby Blue") 0xFFAEC6CF.toInt() else 0xFFD48C95.toInt()
 
+        val publicNotification = NotificationCompat.Builder(context, "bloom_reminders")
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("Bloom")
+            .setContentText("Time for a quick check-in!")
+            .setColor(notifColor)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .build()
+
         val notification = NotificationCompat.Builder(context, "bloom_reminders")
             .setSmallIcon(android.R.drawable.ic_dialog_info) // TODO: use app icon
             .setContentTitle(title)
             .setContentText(body)
             .setColor(notifColor)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(publicNotification)
             .setAutoCancel(true)
             .build()
 

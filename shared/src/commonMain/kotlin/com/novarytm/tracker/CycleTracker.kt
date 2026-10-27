@@ -92,14 +92,17 @@ class CycleTracker(
                 val existing = cycleQueries.selectEntryByDate(dateStr).executeAsOneOrNull()
                 val validIntensity = intensity.coerceIn(0, 5)
                 val validPainLevel = (painLevel ?: existing?.painLevel)?.coerceIn(0, 10)
+                val finalNotes = if (notes != null) {
+                    if (notes.isEmpty()) null else sanitizeNote(notes)
+                } else {
+                    existing?.notes
+                }
                 val finalSymptoms = if (symptoms != null) {
                     if (symptoms.isEmpty()) null else sanitizeSymptoms(symptoms)
                 } else {
                     existing?.symptoms
                 }
-                cycleQueries.insertEntry(dateStr, validIntensity, sanitizeNote(notes), sexualRelations ?: existing?.sexualRelations, validPainLevel, finalSymptoms)
-                val count = cycleQueries.selectAllEntries().executeAsList().size
-                android.util.Log.w("BLOOM_DIAG", "CycleTracker.logNewPeriod: inserted date=$dateStr, intensity=$validIntensity, totalEntries=$count")
+                cycleQueries.insertEntry(dateStr, validIntensity, finalNotes, sexualRelations ?: existing?.sexualRelations, validPainLevel, finalSymptoms)
                 refreshCycleStateInternal()
             }
         }
@@ -184,7 +187,15 @@ class CycleTracker(
     private fun refreshCycleStateInternal() {
             val history = cycleQueries.selectAllEntries().executeAsList()
             
-            _loggedDates.value = history.filter { (it.intensity ?: 0) > 0 }.map { LocalDate.parse(it.date) }.toSet()
+            _loggedDates.value = history
+                .filter { (it.intensity ?: 0) > 0 }
+                .mapNotNull {
+                    try {
+                        LocalDate.parse(it.date)
+                    } catch (_: Exception) {
+                        null
+                    }
+                }.toSet()
             
             val predictions = rustBridge.getCyclePredictions(history)
             

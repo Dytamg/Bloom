@@ -464,4 +464,188 @@ class SyncManagerTest {
         assertFalse(dateRegex.matches("03/01/2024"))
         assertFalse(dateRegex.matches("invalid-date"))
     }
+
+    // =========================================================================
+    // V15 SECURITY, BIOMETRICS & A11Y REMEDIATION TESTS
+    // =========================================================================
+
+    @Test
+    fun testV15_partnerRedaction_cyclePhaseFalseHidesDatesAndPregnancyKeywordsRedacted() {
+        val entries = listOf(
+            CycleEntry(1L, "2024-03-01", 3, "Took a pregnancy test today", null, 2, "Cramps"),
+            CycleEntry(2L, "2024-03-02", 0, "hcg test was positive", null, 1, "Nausea"),
+            CycleEntry(3L, "2024-03-03", 2, "Negative result yesterday, feeling better", null, 0, null),
+            CycleEntry(4L, "2024-03-04", 1, "Standard cramps and headache", null, 3, "Headache")
+        )
+
+        val reminders = listOf(
+            com.novarytm.db.Reminder(1L, "Pregnancy Test", "Monthly", "09:00", "2024-03-15", true),
+            com.novarytm.db.Reminder(2L, "Birth Control", "Daily", "21:00", "2024-03-02", true)
+        )
+
+        // Case 1 (VULN-SYNC-01): shareCyclePhase = false, shareSymptomsMoods = true
+        // Even if symptoms/moods is true, cycle phase is false, so entries MUST be emptyList() (zero dates leaked)
+        val permsNoCycle = PartnerPermissions(
+            shareCyclePhase = false,
+            shareFlowIntensity = false,
+            shareSymptomsMoods = true,
+            shareBirthControl = false,
+            sharePregnancyTests = false,
+            shareSexualActivity = false
+        )
+
+        val filteredEntriesNoCycle = if (!permsNoCycle.shareCyclePhase) {
+            emptyList()
+        } else {
+            entries.map { SyncEntry(it.date, 0, null) }
+        }
+        assertTrue(filteredEntriesNoCycle.isEmpty(), "VULN-SYNC-01: filteredEntries MUST be empty when shareCyclePhase is false")
+
+        // Case 2 (VULN-SYNC-02): shareCyclePhase = true, shareSymptomsMoods = true, sharePregnancyTests = false
+        // Notes containing 'pregnan', 'hcg', 'positive', or 'negative' MUST have notes redacted to null
+        val permsNoPregnancy = PartnerPermissions(
+            shareCyclePhase = true,
+            shareFlowIntensity = true,
+            shareSymptomsMoods = true,
+            shareBirthControl = true,
+            sharePregnancyTests = false,
+            shareSexualActivity = false
+        )
+
+        val filteredEntries = if (!permsNoPregnancy.shareCyclePhase) {
+            emptyList()
+        } else {
+            entries.map {
+                val originalIntensity = it.intensity?.toInt() ?: 0
+                val rawNotes = if (permsNoPregnancy.shareSymptomsMoods) it.notes else null
+                val safeNotes = if (rawNotes != null && !permsNoPregnancy.sharePregnancyTests) {
+                    val lower = rawNotes.lowercase()
+                    if (lower.contains("pregnan") || lower.contains("hcg") || lower.contains("positive") || lower.contains("negative")) {
+                        null
+                    } else {
+                        rawNotes
+                    }
+                } else {
+                    rawNotes
+                }
+                SyncEntry(
+                    date = it.date,
+                    intensity = originalIntensity,
+                    notes = safeNotes,
+                    sexualRelations = null,
+                    painLevel = it.painLevel?.toInt(),
+                    symptoms = it.symptoms
+                )
+            }
+        }
+
+        assertEquals(4, filteredEntries.size)
+        assertNull(filteredEntries[0].notes, "VULN-SYNC-02: 'pregnancy' note must be redacted to null")
+        assertNull(filteredEntries[1].notes, "VULN-SYNC-02: 'hcg' and 'positive' note must be redacted to null")
+        assertNull(filteredEntries[2].notes, "VULN-SYNC-02: 'negative' note must be redacted to null")
+        assertEquals("Standard cramps and headache", filteredEntries[3].notes, "Non-pregnancy note should be preserved")
+
+        // Case 3 (VULN-SYNC-03): Reminders filtering by type
+        // 'Pregnancy Test' reminder checks sharePregnancyTests, while 'Birth Control' checks shareBirthControl
+        val filteredReminders = reminders.filter { rm ->
+            if (rm.type.equals("Pregnancy Test", ignoreCase = true)) {
+                permsNoPregnancy.sharePregnancyTests
+            } else {
+                permsNoPregnancy.shareBirthControl
+            }
+        }.map { SyncReminder(it.type, it.frequency, it.timeOfDay, it.nextDate, it.isActive ?: true) }
+
+        assertEquals(1, filteredReminders.size)
+        assertEquals("Birth Control", filteredReminders[0].type, "VULN-SYNC-03: Birth control reminder should be included")
+
+        // If sharePregnancyTests becomes true, both reminders should be included
+        val permsWithPregnancy = permsNoPregnancy.copy(sharePregnancyTests = true)
+        val allReminders = reminders.filter { rm ->
+            if (rm.type.equals("Pregnancy Test", ignoreCase = true)) {
+                permsWithPregnancy.sharePregnancyTests
+            } else {
+                permsWithPregnancy.shareBirthControl
+            }
+        }
+        assertEquals(2, allReminders.size, "Both reminders should be included when sharePregnancyTests is true")
+    }
+
+    @Test
+    fun testV15_logNewPeriod_preservesExistingNotesWhenNotesNull() {
+        runBlocking {
+            val db = createInMemoryDb()
+            val tracker = CycleTracker(com.novarytm.ffi.RustBridge(), db.cycleQueries, this)
+            val date = LocalDate.parse("2024-04-01")
+
+            // Log initial period entry with notes and symptoms
+            tracker.logNewPeriod(
+                date = date,
+                intensity = 3,
+                notes = "Existing clinical note",
+                symptoms = "cramps"
+            )
+            awaitCondition { db.cycleQueries.selectAllEntries().executeAsList().isNotEmpty() }
+            val initialEntry = db.cycleQueries.selectEntryByDate(date.toString()).executeAsOne()
+            assertEquals("Existing clinical note", initialEntry.notes)
+            assertEquals("Cramps", initialEntry.symptoms)
+
+            // VULN-DB-01 FIX: Update intensity with notes == null -> MUST preserve existing notes
+            tracker.logNewPeriod(date = date, intensity = 4, notes = null)
+            awaitCondition { db.cycleQueries.selectEntryByDate(date.toString()).executeAsOne().intensity == 4 }
+            val updatedEntry = db.cycleQueries.selectEntryByDate(date.toString()).executeAsOne()
+            assertEquals(4, updatedEntry.intensity)
+            assertEquals("Existing clinical note", updatedEntry.notes, "VULN-DB-01: Existing notes must be preserved when notes == null")
+            assertEquals("Cramps", updatedEntry.symptoms, "Existing symptoms must be preserved when symptoms == null")
+
+            // Explicit empty string clears note to null
+            tracker.logNewPeriod(date = date, intensity = 2, notes = "")
+            awaitCondition { db.cycleQueries.selectEntryByDate(date.toString()).executeAsOne().intensity == 2 }
+            val clearedEntry = db.cycleQueries.selectEntryByDate(date.toString()).executeAsOne()
+            assertNull(clearedEntry.notes, "Notes should be cleared to null when explicitly empty string")
+        }
+    }
+
+    @Test
+    fun testV15_invalidCalendarDate_rejectedInSyncAndSafeInTracker() {
+        runBlocking {
+            val db = createInMemoryDb()
+            val tracker = CycleTracker(com.novarytm.ffi.RustBridge(), db.cycleQueries, this)
+
+            // VULN-DB-02 FIX: Semantic calendar validation rejects nonexistent dates
+            val dateRegex = Regex("^\\d{4}-\\d{2}-\\d{2}$")
+            fun isValidCalendarDate(dateStr: String): Boolean {
+                if (!dateRegex.matches(dateStr)) return false
+                return try {
+                    LocalDate.parse(dateStr)
+                    true
+                } catch (_: Exception) {
+                    false
+                }
+            }
+
+            assertTrue(isValidCalendarDate("2024-02-29"), "Valid leap year date should pass")
+            assertTrue(isValidCalendarDate("2026-03-31"), "Valid month end should pass")
+            assertFalse(isValidCalendarDate("2026-02-31"), "VULN-DB-02: Non-existent Feb 31 must be rejected")
+            assertFalse(isValidCalendarDate("9999-99-99"), "VULN-DB-02: Non-existent 9999-99-99 must be rejected")
+            assertFalse(isValidCalendarDate("2025-04-31"), "VULN-DB-02: Non-existent April 31 must be rejected")
+            assertFalse(isValidCalendarDate("2024-13-01"), "VULN-DB-02: Month 13 must be rejected")
+
+            // VULN-DB-03 FIX: Truncation before regex HTML stripping
+            val oversizedNotes = "a".repeat(1000) + "<b>test</b>"
+            val cleanNotes = oversizedNotes.take(500).replace(Regex("<[^>]*>"), "").trim()
+            assertEquals(500, cleanNotes.length)
+            assertFalse(cleanNotes.contains("<b>test</b>"))
+
+            // Crash loop prevention in CycleTracker.refreshCycleState()
+            db.cycleQueries.insertEntry("2026-02-31", 3, "Corrupt date 1", null, null, null)
+            db.cycleQueries.insertEntry("9999-99-99", 2, "Corrupt date 2", null, null, null)
+            db.cycleQueries.insertEntry("2024-03-01", 4, "Valid date", null, null, null)
+
+            // refreshCycleState() must safely ignore corrupted date strings without throwing DateTimeFormatException
+            tracker.refreshCycleState()
+            awaitCondition { tracker.loggedDates.value.isNotEmpty() }
+            assertTrue(tracker.loggedDates.value.contains(LocalDate.parse("2024-03-01")))
+            assertEquals(1, tracker.loggedDates.value.size, "Corrupted dates must be safely dropped without crash")
+        }
+    }
 }

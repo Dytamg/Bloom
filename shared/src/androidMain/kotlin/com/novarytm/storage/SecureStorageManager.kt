@@ -333,6 +333,10 @@ actual class SecureStorageManager(private val context: Context) {
 
     actual fun copyToClipboardSecurely(text: String) {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        if (text.isEmpty() && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            clipboard.clearPrimaryClip()
+            return
+        }
         val clip = android.content.ClipData.newPlainText("Copied Text", text)
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             clip.description.extras = android.os.PersistableBundle().apply {
@@ -351,17 +355,41 @@ actual class SecureStorageManager(private val context: Context) {
     }
 
     actual fun getPinLockoutUntil(): Long {
-        return sharedPreferences.getLong("pin_lockout_until", 0L)
+        val wallUntil = sharedPreferences.getLong("pin_lockout_until", 0L)
+        if (wallUntil <= 0L) return 0L
+        val elapsedUntil = sharedPreferences.getLong("pin_lockout_elapsed", 0L)
+        val nowElapsed = android.os.SystemClock.elapsedRealtime()
+        val nowWall = System.currentTimeMillis()
+        // If monotonic clock shows lockout is still active in this boot session, enforce remaining duration
+        if (elapsedUntil > nowElapsed) {
+            val remainingMs = (elapsedUntil - nowElapsed).coerceAtMost(86_400_000L)
+            return maxOf(wallUntil, nowWall + remainingMs)
+        }
+        return wallUntil
     }
 
     actual fun savePinLockoutUntil(timestampMs: Long) {
-        sharedPreferences.edit().putLong("pin_lockout_until", timestampMs).commit()
+        if (timestampMs <= 0L) {
+            sharedPreferences.edit()
+                .putLong("pin_lockout_until", 0L)
+                .putLong("pin_lockout_elapsed", 0L)
+                .commit()
+        } else {
+            val nowWall = System.currentTimeMillis()
+            val durationMs = (timestampMs - nowWall).coerceIn(0L, 86_400_000L)
+            val elapsedUntil = android.os.SystemClock.elapsedRealtime() + durationMs
+            sharedPreferences.edit()
+                .putLong("pin_lockout_until", timestampMs)
+                .putLong("pin_lockout_elapsed", elapsedUntil)
+                .commit()
+        }
     }
 
     actual fun clearLockoutState() {
         sharedPreferences.edit()
             .putInt("failed_pin_attempts", 0)
             .putLong("pin_lockout_until", 0L)
+            .putLong("pin_lockout_elapsed", 0L)
             .commit()
     }
 

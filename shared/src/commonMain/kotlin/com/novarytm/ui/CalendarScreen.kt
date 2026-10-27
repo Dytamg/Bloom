@@ -35,6 +35,8 @@ import kotlin.time.Clock
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import com.novarytm.db.CycleEntry
 import com.novarytm.sync.PartnerPermissions
 import kotlinx.datetime.*
@@ -155,7 +157,18 @@ fun CalendarGrid(
 
                             Box(
                                 modifier = Modifier
-                                    .size(38.dp)
+                                    .size(44.dp)
+                                    .semantics(mergeDescendants = true) {
+                                        contentDescription = buildString {
+                                            append(currentDate.toHumanReadable())
+                                            if (isToday) append(", Today")
+                                            if (isLogged) append(", Period logged")
+                                            if (isPredicted) append(", Predicted period")
+                                            if (isFertile) append(", Fertile window")
+                                            if (isSymptomOnly) append(", Symptoms logged")
+                                            if (isSexual) append(", Intimacy logged")
+                                        }
+                                    }
                                     .clickable { onDateSelected(currentDate) }
                                     .then(
                                         if (selectedDate == currentDate) {
@@ -676,7 +689,7 @@ fun HistoryGroupItem(
                                 }
                             }
                             if (!isPartner) {
-                                IconButton(onClick = { onEditDay(dayEntry) }, modifier = Modifier.size(28.dp)) {
+                                IconButton(onClick = { onEditDay(dayEntry) }, modifier = Modifier.size(48.dp)) {
                                     Icon(Icons.Default.Edit, contentDescription = "Edit Day ${index + 1}", tint = periodColor.copy(alpha = 0.8f), modifier = Modifier.size(16.dp))
                                 }
                             }
