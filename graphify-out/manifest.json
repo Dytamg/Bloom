@@ -1,0 +1,476 @@
+{
+  "androidApp/build.gradle.kts": {
+    "mtime": 1782692260.0294547,
+    "seen": 1793800813.2904363,
+    "ast_hash": "35613163e2d5754f8329a3ff85d35cf5",
+    "semantic_hash": "35613163e2d5754f8329a3ff85d35cf5"
+  },
+  "androidApp/src/main/java/com/novarytm/android/MainActivity.kt": {
+    "mtime": 1782118654.0,
+    "seen": 1793800813.290443,
+    "ast_hash": "4629ebe94901f8bf019d7292d03b85c1",
+    "semantic_hash": "4629ebe94901f8bf019d7292d03b85c1"
+  },
+  "build.gradle.kts": {
+    "mtime": 1782118654.0,
+    "seen": 1793800813.2904458,
+    "ast_hash": "4b3a1a4e914617a5d8b77c26736c969d",
+    "semantic_hash": "4b3a1a4e914617a5d8b77c26736c969d"
+  },
+  "gradlew": {
+    "mtime": 1782334981.7079873,
+    "seen": 1793800813.2904475,
+    "ast_hash": "45bf2667b1fbec0e07e42808dc662b6b",
+    "semantic_hash": "45bf2667b1fbec0e07e42808dc662b6b"
+  },
+  "iosApp/iosApp/ContentView.swift": {
+    "mtime": 1782118654.0,
+    "seen": 1793800813.290449,
+    "ast_hash": "06e2c2b86cf32c742492a35157117851",
+    "semantic_hash": "06e2c2b86cf32c742492a35157117851"
+  },
+  "iosApp/iosApp/iOSApp.swift": {
+    "mtime": 1782118654.0,
+    "seen": 1793800813.2904499,
+    "ast_hash": "551ba5f1183e9e496961346ec321ab54",
+    "semantic_hash": "551ba5f1183e9e496961346ec321ab54"
+  },
+  "rust_core/Cargo.toml": {
+    "mtime": 1789267085.7984798,
+    "seen": 1793800813.2904515,
+    "ast_hash": "dc9724345cd3cfee0d0651552974288c",
+    "semantic_hash": "dc9724345cd3cfee0d0651552974288c"
+  },
+  "rust_core/src/lib.rs": {
+    "mtime": 1793113048.2012274,
+    "seen": 1793800813.2904527,
+    "ast_hash": "d13c88eb182c3a30cb3fd39b5fda4b70",
+    "semantic_hash": "d13c88eb182c3a30cb3fd39b5fda4b70"
+  },
+  "rust_core/src/prediction_engine.rs": {
+    "mtime": 1793112884.452819,
+    "seen": 1793800813.2904537,
+    "ast_hash": "729c82bfee1984141efb0a64791d44c7",
+    "semantic_hash": "729c82bfee1984141efb0a64791d44c7"
+  },
+  "settings.gradle.kts": {
+    "mtime": 1782685238.5301623,
+    "seen": 1793800813.290455,
+    "ast_hash": "b17c04e6aa7ef79a9a9eaf487531241b",
+    "semantic_hash": "b17c04e6aa7ef79a9a9eaf487531241b"
+  },
+  "shared/build.gradle.kts": {
+    "mtime": 1792598401.5001318,
+    "seen": 1793800813.2904563,
+    "ast_hash": "cabdb105a986c302e84999d1b826f3a7",
+    "semantic_hash": "cabdb105a986c302e84999d1b826f3a7"
+  },
+  "shared/src/androidMain/kotlin/com/novarytm/auth/BiometricAuthenticator.kt": {
+    "mtime": 1792597070.904584,
+    "seen": 1793800813.290458,
+    "ast_hash": "97dc25bf84f77e16d31a5300e934f60a",
+    "semantic_hash": "97dc25bf84f77e16d31a5300e934f60a"
+  },
+  "shared/src/androidMain/kotlin/com/novarytm/auth/GoogleAuthManager.kt": {
+    "mtime": 1783896315.6459901,
+    "seen": 1793800813.290459,
+    "ast_hash": "3cce2d99e9c0387c7e5f6da7733a5ade",
+    "semantic_hash": "3cce2d99e9c0387c7e5f6da7733a5ade"
+  },
+  "shared/src/androidMain/kotlin/com/novarytm/db/DatabaseHelper.kt": {
+    "mtime": 1783896331.1315308,
+    "seen": 1793800813.29046,
+    "ast_hash": "75e27155f257834583a4992abe67558e",
+    "semantic_hash": "75e27155f257834583a4992abe67558e"
+  },
+  "shared/src/androidMain/kotlin/com/novarytm/ffi/RustBridge.kt": {
+    "mtime": 1792597060.5402493,
+    "seen": 1793800813.2904615,
+    "ast_hash": "c293eb71fc9e0e2e28a2ca91e2b2fa20",
+    "semantic_hash": "c293eb71fc9e0e2e28a2ca91e2b2fa20"
+  },
+  "shared/src/androidMain/kotlin/com/novarytm/notifications/NotificationReceiver.kt": {
+    "mtime": 1793114332.8254404,
+    "seen": 1793800813.2904625,
+    "ast_hash": "fd5f491fa9fc414c66873f8205841b68",
+    "semantic_hash": "fd5f491fa9fc414c66873f8205841b68"
+  },
+  "shared/src/androidMain/kotlin/com/novarytm/notifications/NotificationScheduler.kt": {
+    "mtime": 1792596951.4626596,
+    "seen": 1793800813.2904634,
+    "ast_hash": "81053474ea257137eb1024794de0cbbf",
+    "semantic_hash": "81053474ea257137eb1024794de0cbbf"
+  },
+  "shared/src/androidMain/kotlin/com/novarytm/storage/SecureStorageManager.kt": {
+    "mtime": 1793113070.5824654,
+    "seen": 1793800813.2904649,
+    "ast_hash": "9990854278e9285fcf2fd8bb57419d0e",
+    "semantic_hash": "9990854278e9285fcf2fd8bb57419d0e"
+  },
+  "shared/src/androidMain/kotlin/com/novarytm/ui/BackHandler.kt": {
+    "mtime": 1782694754.9397178,
+    "seen": 1793800813.290466,
+    "ast_hash": "4b282e5b4e0dfbeb4fb8f51dd4c96578",
+    "semantic_hash": "4b282e5b4e0dfbeb4fb8f51dd4c96578"
+  },
+  "shared/src/androidMain/kotlin/com/novarytm/utils/LocaleUtils.android.kt": {
+    "mtime": 1782118654.0,
+    "seen": 1793800813.290467,
+    "ast_hash": "893dda70ed5bc51baf6275de459d4915",
+    "semantic_hash": "893dda70ed5bc51baf6275de459d4915"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/auth/BiometricAuthenticator.kt": {
+    "mtime": 1782118654.0,
+    "seen": 1793800813.2904685,
+    "ast_hash": "5995b9f34b55619d40dba7b0302d20ac",
+    "semantic_hash": "5995b9f34b55619d40dba7b0302d20ac"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/auth/GoogleAuthManager.kt": {
+    "mtime": 1782118654.0,
+    "seen": 1793800813.2904694,
+    "ast_hash": "45024ea1944bf95ed4ce4b41543411fb",
+    "semantic_hash": "45024ea1944bf95ed4ce4b41543411fb"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/auth/SessionManager.kt": {
+    "mtime": 1792596849.87807,
+    "seen": 1793800813.2904708,
+    "ast_hash": "d2a830db8ac07903237c5ebc26895489",
+    "semantic_hash": "d2a830db8ac07903237c5ebc26895489"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/db/DatabaseHelper.kt": {
+    "mtime": 1782443590.8368578,
+    "seen": 1793800813.2904723,
+    "ast_hash": "2c1506b09373e092679b669f7749655a",
+    "semantic_hash": "2c1506b09373e092679b669f7749655a"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/ffi/RustBridge.kt": {
+    "mtime": 1782135339.3003845,
+    "seen": 1793800813.2904735,
+    "ast_hash": "0bc165e0a278e8a282a1ca5b6fe27f70",
+    "semantic_hash": "0bc165e0a278e8a282a1ca5b6fe27f70"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/notifications/NotificationScheduler.kt": {
+    "mtime": 1782118654.0,
+    "seen": 1793800813.2904747,
+    "ast_hash": "2c7c3593891352461b12a5f65958c7a2",
+    "semantic_hash": "2c7c3593891352461b12a5f65958c7a2"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/storage/SecureStorageManager.kt": {
+    "mtime": 1782491781.0143447,
+    "seen": 1793800813.290476,
+    "ast_hash": "78d9bb583343b913bb891942f6d284ba",
+    "semantic_hash": "78d9bb583343b913bb891942f6d284ba"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/sync/GoogleDriveManager.kt": {
+    "mtime": 1792596826.5368493,
+    "seen": 1793800813.290477,
+    "ast_hash": "305dd243670d701009f62227565ca635",
+    "semantic_hash": "305dd243670d701009f62227565ca635"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/sync/PartnerPermissions.kt": {
+    "mtime": 1782136326.8134952,
+    "seen": 1793800813.2904782,
+    "ast_hash": "b55d5da1708bbafa9f9dc0bdcc5657aa",
+    "semantic_hash": "b55d5da1708bbafa9f9dc0bdcc5657aa"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/sync/SyncManager.kt": {
+    "mtime": 1793112974.6457343,
+    "seen": 1793800813.2904794,
+    "ast_hash": "2ce290d0a511e7c74989f798e7b96bfd",
+    "semantic_hash": "2ce290d0a511e7c74989f798e7b96bfd"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/sync/SyncModels.kt": {
+    "mtime": 1782443601.0217094,
+    "seen": 1793800813.2904804,
+    "ast_hash": "0a6f3948438a459cc4ba67d263a8f6f0",
+    "semantic_hash": "0a6f3948438a459cc4ba67d263a8f6f0"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/tracker/CycleTracker.kt": {
+    "mtime": 1793113050.622145,
+    "seen": 1793800813.2904816,
+    "ast_hash": "16f58712633ce3474e90350df865a3b2",
+    "semantic_hash": "16f58712633ce3474e90350df865a3b2"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/ui/App.kt": {
+    "mtime": 1793113209.7937322,
+    "seen": 1793800813.2904828,
+    "ast_hash": "8d7ceb78d4f39870a9c727acc944e6ae",
+    "semantic_hash": "8d7ceb78d4f39870a9c727acc944e6ae"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/ui/BackHandler.kt": {
+    "mtime": 1782694750.2367542,
+    "seen": 1793800813.290484,
+    "ast_hash": "eb4c8d7b3cbecc9ec7da140dfec77d76",
+    "semantic_hash": "eb4c8d7b3cbecc9ec7da140dfec77d76"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/ui/BiometricsSetupScreen.kt": {
+    "mtime": 1782118654.0,
+    "seen": 1793800813.290485,
+    "ast_hash": "bc78f88f931db9dfe79937c1b558e0eb",
+    "semantic_hash": "bc78f88f931db9dfe79937c1b558e0eb"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/ui/BirthControlLibrary.kt": {
+    "mtime": 1782118654.0,
+    "seen": 1793800813.290486,
+    "ast_hash": "6474eb56a1913c8bc8ae2bba7aedf3d6",
+    "semantic_hash": "6474eb56a1913c8bc8ae2bba7aedf3d6"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/ui/BirthControlQuiz.kt": {
+    "mtime": 1782118654.0,
+    "seen": 1793800813.2904873,
+    "ast_hash": "a191454b9b23d2633d2c84119f6f50af",
+    "semantic_hash": "a191454b9b23d2633d2c84119f6f50af"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/ui/CalendarScreen.kt": {
+    "mtime": 1793114308.9652505,
+    "seen": 1793800813.2904882,
+    "ast_hash": "dbbaf7d523bfe72d64ba9fcd3f65b167",
+    "semantic_hash": "dbbaf7d523bfe72d64ba9fcd3f65b167"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/ui/ConnectPartnerScreen.kt": {
+    "mtime": 1792598709.7254915,
+    "seen": 1793800813.2904897,
+    "ast_hash": "10ea9e12ca6a95f7bf46d477f2512141",
+    "semantic_hash": "10ea9e12ca6a95f7bf46d477f2512141"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/ui/CreatePinScreen.kt": {
+    "mtime": 1793113146.1978936,
+    "seen": 1793800813.2904906,
+    "ast_hash": "5e8cc95e5c785d0f34b4f06ac9b7aa54",
+    "semantic_hash": "5e8cc95e5c785d0f34b4f06ac9b7aa54"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/ui/CyclePhaseVisualizer.kt": {
+    "mtime": 1793114289.0359273,
+    "seen": 1793800813.2904916,
+    "ast_hash": "d685daafd35cf43b6ca9d0a76eab372b",
+    "semantic_hash": "d685daafd35cf43b6ca9d0a76eab372b"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/ui/HealthHubScreen.kt": {
+    "mtime": 1792596987.5962846,
+    "seen": 1793800813.290493,
+    "ast_hash": "f17226dc2c0af60c07eaaf5a1cc88cd9",
+    "semantic_hash": "f17226dc2c0af60c07eaaf5a1cc88cd9"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/ui/InputIdentityScreen.kt": {
+    "mtime": 1782492721.5112884,
+    "seen": 1793800813.290494,
+    "ast_hash": "6c9d0da946a468564049eecdacd3fe42",
+    "semantic_hash": "6c9d0da946a468564049eecdacd3fe42"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/ui/LockScreen.kt": {
+    "mtime": 1793113116.9608877,
+    "seen": 1793800813.290496,
+    "ast_hash": "40f1cb41346f22c2603012032113bab0",
+    "semantic_hash": "40f1cb41346f22c2603012032113bab0"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/ui/LogEntryScreen.kt": {
+    "mtime": 1792596765.0558732,
+    "seen": 1793800813.290497,
+    "ast_hash": "628718f0e86d3542e71bfc4931d5e0b7",
+    "semantic_hash": "628718f0e86d3542e71bfc4931d5e0b7"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/ui/LoginScreen.kt": {
+    "mtime": 1782691420.3246417,
+    "seen": 1793800813.290498,
+    "ast_hash": "125f8d68c939b2ebd2c646ee518b058e",
+    "semantic_hash": "125f8d68c939b2ebd2c646ee518b058e"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/ui/MainDashboard.kt": {
+    "mtime": 1792597392.1527202,
+    "seen": 1793800813.2904992,
+    "ast_hash": "4d2faf1ffa7b06d11b063d118cd4c49e",
+    "semantic_hash": "4d2faf1ffa7b06d11b063d118cd4c49e"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/ui/PartnerPermissionsScreen.kt": {
+    "mtime": 1782136552.5644405,
+    "seen": 1793800813.2905004,
+    "ast_hash": "f6387042a931c47782d97568123d7dca",
+    "semantic_hash": "f6387042a931c47782d97568123d7dca"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/ui/PartnerSettingsScreen.kt": {
+    "mtime": 1782118654.0,
+    "seen": 1793800813.2905016,
+    "ast_hash": "cddb91cce6703edf75789a5b37a75ac8",
+    "semantic_hash": "cddb91cce6703edf75789a5b37a75ac8"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/ui/RecoveryKeyWarningScreen.kt": {
+    "mtime": 1793113323.7348616,
+    "seen": 1793800813.2905025,
+    "ast_hash": "9e2457e81872036b6ebcbd91b49d8008",
+    "semantic_hash": "9e2457e81872036b6ebcbd91b49d8008"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/ui/ShareSyncCodeScreen.kt": {
+    "mtime": 1793114265.2187362,
+    "seen": 1793800813.290504,
+    "ast_hash": "a4ca2c1309abdb372bc1e5d83cbe11f4",
+    "semantic_hash": "a4ca2c1309abdb372bc1e5d83cbe11f4"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/ui/Stabilization.kt": {
+    "mtime": 1789269489.1480472,
+    "seen": 1793800813.290505,
+    "ast_hash": "a46e431108d7eb253c80b8a35adb8d29",
+    "semantic_hash": "a46e431108d7eb253c80b8a35adb8d29"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/ui/Theme.kt": {
+    "mtime": 1793114318.4309292,
+    "seen": 1793800813.2905061,
+    "ast_hash": "7c52724e0529bafb91281551131449ef",
+    "semantic_hash": "7c52724e0529bafb91281551131449ef"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/utils/AppJson.kt": {
+    "mtime": 1782437948.9309978,
+    "seen": 1793800813.2905073,
+    "ast_hash": "37513d8a47657e389c1bee6016537b73",
+    "semantic_hash": "37513d8a47657e389c1bee6016537b73"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/utils/AppStrings.kt": {
+    "mtime": 1792597125.1434922,
+    "seen": 1793800813.2905085,
+    "ast_hash": "c4050de7987f52d430362beef2867018",
+    "semantic_hash": "c4050de7987f52d430362beef2867018"
+  },
+  "shared/src/commonMain/kotlin/com/novarytm/utils/LocaleUtils.kt": {
+    "mtime": 1782118654.0,
+    "seen": 1793800813.29051,
+    "ast_hash": "e3aad9eb59360fc430b4690859393552",
+    "semantic_hash": "e3aad9eb59360fc430b4690859393552"
+  },
+  "shared/src/commonTest/kotlin/com/novarytm/sync/SyncManagerTest.kt": {
+    "mtime": 1793114441.6617448,
+    "seen": 1793800813.290511,
+    "ast_hash": "ae75d7126342ba41b0c2c10d7352d36a",
+    "semantic_hash": "ae75d7126342ba41b0c2c10d7352d36a"
+  },
+  "shared/src/iosMain/kotlin/com/novarytm/auth/BiometricAuthenticator.kt": {
+    "mtime": 1782118654.0,
+    "seen": 1793800813.2905118,
+    "ast_hash": "00f8ae2c3b3178e48783049a9b880f93",
+    "semantic_hash": "00f8ae2c3b3178e48783049a9b880f93"
+  },
+  "shared/src/iosMain/kotlin/com/novarytm/auth/GoogleAuthManager.kt": {
+    "mtime": 1783089621.898001,
+    "seen": 1793800813.290513,
+    "ast_hash": "1e449f1462ceeb9beb234b46d4d9f57a",
+    "semantic_hash": "1e449f1462ceeb9beb234b46d4d9f57a"
+  },
+  "shared/src/iosMain/kotlin/com/novarytm/db/DatabaseHelper.kt": {
+    "mtime": 1782118654.0,
+    "seen": 1793800813.2905142,
+    "ast_hash": "6fbea5b65ed134ca11c64560dce7d25c",
+    "semantic_hash": "6fbea5b65ed134ca11c64560dce7d25c"
+  },
+  "shared/src/iosMain/kotlin/com/novarytm/ffi/RustBridge.kt": {
+    "mtime": 1783096106.0405614,
+    "seen": 1793800813.2905154,
+    "ast_hash": "ef09c7fb9edaf83d1dd1594be7949023",
+    "semantic_hash": "ef09c7fb9edaf83d1dd1594be7949023"
+  },
+  "shared/src/iosMain/kotlin/com/novarytm/notifications/NotificationScheduler.kt": {
+    "mtime": 1782118654.0,
+    "seen": 1793800813.2905164,
+    "ast_hash": "e2428e02dd4eba1c3fee6c9a6e32ebc3",
+    "semantic_hash": "e2428e02dd4eba1c3fee6c9a6e32ebc3"
+  },
+  "shared/src/iosMain/kotlin/com/novarytm/storage/SecureStorageManager.kt": {
+    "mtime": 1782687685.9859664,
+    "seen": 1793800813.2905176,
+    "ast_hash": "ded9b4e03c6da660d89faa2bf3b538c6",
+    "semantic_hash": "ded9b4e03c6da660d89faa2bf3b538c6"
+  },
+  "shared/src/iosMain/kotlin/com/novarytm/ui/BackHandler.kt": {
+    "mtime": 1782694759.3276837,
+    "seen": 1793800813.2905188,
+    "ast_hash": "92c7799b3d90432f0ec7f3e263171064",
+    "semantic_hash": "92c7799b3d90432f0ec7f3e263171064"
+  },
+  "shared/src/iosMain/kotlin/com/novarytm/utils/LocaleUtils.ios.kt": {
+    "mtime": 1782118654.0,
+    "seen": 1793800813.2905197,
+    "ast_hash": "fa7f4f15a4ab7b422f7d2c4db91f4b8e",
+    "semantic_hash": "fa7f4f15a4ab7b422f7d2c4db91f4b8e"
+  },
+  "shared/src/iosMain/kotlin/main.ios.kt": {
+    "mtime": 1782118654.0,
+    "seen": 1793800813.290521,
+    "ast_hash": "227d5980d84411516c9fcd099a6f9873",
+    "semantic_hash": "227d5980d84411516c9fcd099a6f9873"
+  },
+  "README.md": {
+    "mtime": 1782118654.0,
+    "seen": 1793800813.290522,
+    "ast_hash": "8b49afd8913e21ed7a2b3148b5f09245",
+    "semantic_hash": "8b49afd8913e21ed7a2b3148b5f09245"
+  },
+  "playstore/content_rating.md": {
+    "mtime": 1790781572.5747342,
+    "seen": 1793800813.290523,
+    "ast_hash": "72bffb8997fea13a2049a81b0e7345db",
+    "semantic_hash": "72bffb8997fea13a2049a81b0e7345db"
+  },
+  "playstore/data_safety.md": {
+    "mtime": 1790781572.5727344,
+    "seen": 1793800813.2905245,
+    "ast_hash": "405e952a4bb8abb570b97c08dcb77627",
+    "semantic_hash": "405e952a4bb8abb570b97c08dcb77627"
+  },
+  "playstore/privacy_policy.md": {
+    "mtime": 1790781562.6358864,
+    "seen": 1793800813.2905254,
+    "ast_hash": "848040a48162096abe119d3b21e53340",
+    "semantic_hash": "848040a48162096abe119d3b21e53340"
+  },
+  "playstore/release_checklist.md": {
+    "mtime": 1790781572.5767343,
+    "seen": 1793800813.2905266,
+    "ast_hash": "00b8aaedcc8ffda73d5a9fcf8b0c91e9",
+    "semantic_hash": "00b8aaedcc8ffda73d5a9fcf8b0c91e9"
+  },
+  "playstore/store_listing.md": {
+    "mtime": 1790781565.5868394,
+    "seen": 1793800813.2905278,
+    "ast_hash": "8a785f4802381ae85d3dbb125dd53be0",
+    "semantic_hash": "8a785f4802381ae85d3dbb125dd53be0"
+  },
+  "walkthrough.md": {
+    "mtime": 1782118654.0,
+    "seen": 1793800813.2905288,
+    "ast_hash": "fad41a12720eaeb8862a4460997ba7e0",
+    "semantic_hash": "fad41a12720eaeb8862a4460997ba7e0"
+  },
+  "androidApp/src/main/res/drawable/bloom_logo.png": {
+    "mtime": 1783139795.861278,
+    "seen": 1793800813.29053,
+    "ast_hash": "21c1a7581d9e5ff66cf68b1af45d8b98",
+    "semantic_hash": "21c1a7581d9e5ff66cf68b1af45d8b98"
+  },
+  "androidApp/src/main/res/mipmap-xxxhdpi/ic_launcher.png": {
+    "mtime": 1783139795.8633075,
+    "seen": 1793800813.2905314,
+    "ast_hash": "21c1a7581d9e5ff66cf68b1af45d8b98",
+    "semantic_hash": "21c1a7581d9e5ff66cf68b1af45d8b98"
+  },
+  "androidApp/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png": {
+    "mtime": 1783139795.865867,
+    "seen": 1793800813.2905324,
+    "ast_hash": "21c1a7581d9e5ff66cf68b1af45d8b98",
+    "semantic_hash": "21c1a7581d9e5ff66cf68b1af45d8b98"
+  },
+  "shared/src/commonMain/composeResources/drawable/app_logo.png": {
+    "mtime": 1783139795.8588707,
+    "seen": 1793800813.2905335,
+    "ast_hash": "21c1a7581d9e5ff66cf68b1af45d8b98",
+    "semantic_hash": "21c1a7581d9e5ff66cf68b1af45d8b98"
+  },
+  "scripts/query_graph.sh": {
+    "mtime": 1793805276.2424893,
+    "seen": 1793806017.6800706,
+    "ast_hash": "c5852e9d55a47ae139665aaff806db56",
+    "semantic_hash": ""
+  },
+  "GEMINI.md": {
+    "mtime": 1793805139.795029,
+    "seen": 1793806017.6801515,
+    "ast_hash": "4621e8505afd096cc25cc2327fb98e8a",
+    "semantic_hash": ""
+  }
+}

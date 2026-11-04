@@ -19,6 +19,13 @@ captures/
 *.keystore
 *.jks
 
+# Graphify Knowledge Graph Cache & Sidecars
+graphify-out/cache/
+graphify-out/.graphify_*
+graphify-out/.needs_update
+graphify-out/20*/
+
+
 # iOS-specific
 iosApp/DerivedData/
 iosApp/build/
@@ -50,3 +57,10 @@ google-services.json
 credentials.json
 *.keystore
 *.jks
+
+# Graphify Knowledge Graph Cache & Sidecars
+graphify-out/cache/
+graphify-out/.graphify_*
+graphify-out/.needs_update
+graphify-out/20*/
+
