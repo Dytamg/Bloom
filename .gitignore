@@ -49,6 +49,9 @@ shared/src/androidMain/jniLibs/
 *.hprof
 .DS_Store
 
+# Virtual Environment
+.venv/
+
 # Secrets and local config
 .env
 local.properties
