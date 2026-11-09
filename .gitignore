@@ -19,12 +19,8 @@ captures/
 *.keystore
 *.jks
 
-# Graphify Knowledge Graph Cache & Sidecars
-graphify-out/cache/
-graphify-out/.graphify_*
-graphify-out/.needs_update
-graphify-out/20*/
-
+# Graphify Knowledge Graph
+graphify-out/
 
 # iOS-specific
 iosApp/DerivedData/
@@ -61,9 +57,4 @@ credentials.json
 *.keystore
 *.jks
 
-# Graphify Knowledge Graph Cache & Sidecars
-graphify-out/cache/
-graphify-out/.graphify_*
-graphify-out/.needs_update
-graphify-out/20*/
 
