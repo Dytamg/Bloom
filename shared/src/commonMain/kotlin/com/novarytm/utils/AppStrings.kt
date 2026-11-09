@@ -20,7 +20,18 @@ object AppStrings {
         "connect_button" to "Connect and Set PIN",
         "expired_code" to "This Sync Code has expired. Please ask your partner to generate a new one.",
         "invalid_format" to "Invalid code format.",
-        "invalid_code" to "Invalid Sync Code."
+        "invalid_code" to "Invalid Sync Code.",
+        "flow_0" to "None",
+        "flow_1" to "Spotting",
+        "flow_2" to "Light",
+        "flow_3" to "Medium",
+        "flow_4" to "Heavy",
+        "flow_5" to "Very Heavy",
+        "flow_0_desc" to "0 · No Flow (Symptoms / Daily Check-in)",
+        "legend_no_flow" to "0 Flow / Symptoms",
+        "legend_intimacy" to "Intimacy",
+        "awaiting_period_title" to "Awaiting Period Log",
+        "awaiting_period_subtitle" to "Log Flow 1–5 to unlock cycle predictions"
     )
 
     private val es = mapOf(
@@ -42,7 +53,18 @@ object AppStrings {
         "connect_button" to "Conectar y Establecer PIN",
         "expired_code" to "Este Código de Sincronización ha expirado. Por favor, pide a tu pareja que genere uno nuevo.",
         "invalid_format" to "Formato de código inválido.",
-        "invalid_code" to "Código de Sincronización inválido."
+        "invalid_code" to "Código de Sincronización inválido.",
+        "flow_0" to "Sin flujo",
+        "flow_1" to "Manchado",
+        "flow_2" to "Ligero",
+        "flow_3" to "Medio",
+        "flow_4" to "Abundante",
+        "flow_5" to "Muy abundante",
+        "flow_0_desc" to "0 · Sin flujo (Síntomas / Registro diario)",
+        "legend_no_flow" to "Flujo 0 / Síntomas",
+        "legend_intimacy" to "Intimidad",
+        "awaiting_period_title" to "Esperando registro de período",
+        "awaiting_period_subtitle" to "Registra flujo 1–5 para activar predicciones"
     )
 
     private val fr = mapOf(
@@ -64,7 +86,18 @@ object AppStrings {
         "connect_button" to "Se connecter et définir le code PIN",
         "expired_code" to "Ce code de synchronisation a expiré. Veuillez demander à votre partenaire d'en générer un nouveau.",
         "invalid_format" to "Format de code non valide.",
-        "invalid_code" to "Code de synchronisation non valide."
+        "invalid_code" to "Code de synchronisation non valide.",
+        "flow_0" to "Aucun flux",
+        "flow_1" to "Spotting",
+        "flow_2" to "Léger",
+        "flow_3" to "Moyen",
+        "flow_4" to "Abondant",
+        "flow_5" to "Très abondant",
+        "flow_0_desc" to "0 · Aucun flux (Symptômes / Suivi quotidien)",
+        "legend_no_flow" to "Flux 0 / Symptômes",
+        "legend_intimacy" to "Intimité",
+        "awaiting_period_title" to "En attente de règles",
+        "awaiting_period_subtitle" to "Enregistrez un flux 1–5 pour activer les prédictions"
     )
 
     private val pt = mapOf(
@@ -86,7 +119,18 @@ object AppStrings {
         "connect_button" to "Conectar e definir PIN",
         "expired_code" to "Este código de sincronização expirou. Peça ao seu parceiro para gerar um novo.",
         "invalid_format" to "Formato de código inválido.",
-        "invalid_code" to "Código de sincronização inválido."
+        "invalid_code" to "Código de sincronização inválido.",
+        "flow_0" to "Sem fluxo",
+        "flow_1" to "Escape",
+        "flow_2" to "Leve",
+        "flow_3" to "Médio",
+        "flow_4" to "Intenso",
+        "flow_5" to "Muito intenso",
+        "flow_0_desc" to "0 · Sem fluxo (Sintomas / Registro diário)",
+        "legend_no_flow" to "Fluxo 0 / Sintomas",
+        "legend_intimacy" to "Intimidade",
+        "awaiting_period_title" to "Aguardando registro de ciclo",
+        "awaiting_period_subtitle" to "Registre fluxo 1–5 para ativar previsões"
     )
 
     private val de = mapOf(

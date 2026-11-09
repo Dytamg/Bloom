@@ -5,6 +5,7 @@ package com.novarytm.sync
 import com.novarytm.db.NovarytmDatabase
 import com.novarytm.ffi.RustBridge
 import com.novarytm.storage.SecureStorageManager
+import com.novarytm.tracker.CycleTracker
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlin.time.Clock
@@ -28,7 +29,8 @@ class SyncManager(
     private val rustBridge: RustBridge,
     private val storage: SecureStorageManager,
     private val googleDriveManager: GoogleDriveManager,
-    val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+    private val cycleTracker: CycleTracker? = null
 ) {
     private val queries = database.cycleQueries
     private val uploadMutex = Mutex()
@@ -106,7 +108,42 @@ class SyncManager(
             val reminders = queries.selectAllReminders().executeAsList()
             
             val filteredEntries = if (!permissions.shareCyclePhase) {
-                emptyList()
+                entries.mapNotNull { entry ->
+                    val rawNotes = if (permissions.shareSymptomsMoods) entry.notes else null
+                    val safeNotes = if (rawNotes != null && !permissions.sharePregnancyTests) {
+                        val lower = rawNotes.lowercase()
+                        if (lower.contains("pregnan") || lower.contains("hcg") || lower.contains("positive") || lower.contains("negative")) {
+                            null
+                        } else {
+                            rawNotes
+                        }
+                    } else {
+                        rawNotes
+                    }
+                    val sharedSymptoms = if (permissions.shareSymptomsMoods) entry.symptoms else null
+                    val sharedPainLevel = if (permissions.shareSymptomsMoods) entry.painLevel?.toInt() else null
+                    val sharedSexualRelations = if (permissions.shareSexualActivity) entry.sexualRelations else null
+
+                    val hasSharedSymptomsMoods = permissions.shareSymptomsMoods && (
+                        !sharedSymptoms.isNullOrEmpty() ||
+                        (entry.painLevel?.toLong() ?: 0L) > 0L ||
+                        !safeNotes.isNullOrBlank()
+                    )
+                    val hasSharedSexualActivity = permissions.shareSexualActivity && !sharedSexualRelations.isNullOrEmpty()
+
+                    if (hasSharedSymptomsMoods || hasSharedSexualActivity) {
+                        SyncEntry(
+                            date = entry.date,
+                            intensity = 0,
+                            notes = safeNotes,
+                            sexualRelations = sharedSexualRelations,
+                            painLevel = sharedPainLevel,
+                            symptoms = sharedSymptoms
+                        )
+                    } else {
+                        null
+                    }
+                }
             } else {
                 entries.map { 
                     val originalIntensity = it.intensity?.toInt() ?: 0
@@ -321,6 +358,8 @@ class SyncManager(
                     queries.insertReminder(rm.type, rm.frequency, rm.timeOfDay, rm.nextDate, rm.isActive)
                 }
             }
+            
+            cycleTracker?.refreshCycleState()
             
             storage.saveLastSyncTimestamp(payload.lastUpdated)
             

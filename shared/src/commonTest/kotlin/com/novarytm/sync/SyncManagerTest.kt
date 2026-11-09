@@ -648,4 +648,244 @@ class SyncManagerTest {
             assertEquals(1, tracker.loggedDates.value.size, "Corrupted dates must be safely dropped without crash")
         }
     }
+
+    @Test
+    fun testZeroFlowEntrySyncPreservesSymptomsAndZeroIntensity() {
+        val zeroFlowEntry = CycleEntry(
+            id = 1L,
+            date = "2024-03-10",
+            intensity = 0,
+            notes = "Mild headache and fatigue",
+            sexualRelations = "protected",
+            painLevel = 2,
+            symptoms = "Headaches"
+        )
+
+        val bleedingEntry = CycleEntry(
+            id = 2L,
+            date = "2024-03-11",
+            intensity = 4,
+            notes = "Heavy bleeding",
+            sexualRelations = null,
+            painLevel = 5,
+            symptoms = "Cramps"
+        )
+
+        val entries = listOf(zeroFlowEntry, bleedingEntry)
+
+        // Case A: shareCyclePhase = true, shareFlowIntensity = true, shareSymptomsMoods = true, shareSexualActivity = true
+        val permsFull = PartnerPermissions(
+            shareCyclePhase = true,
+            shareFlowIntensity = true,
+            shareSymptomsMoods = true,
+            shareBirthControl = true,
+            sharePregnancyTests = true,
+            shareSexualActivity = true
+        )
+
+        val filteredFull = entries.map { entry ->
+            val originalIntensity = entry.intensity?.toInt() ?: 0
+            SyncEntry(
+                date = entry.date,
+                intensity = when {
+                    permsFull.shareFlowIntensity -> originalIntensity
+                    permsFull.shareCyclePhase && originalIntensity > 0 -> 1
+                    else -> 0
+                },
+                notes = if (permsFull.shareSymptomsMoods) entry.notes else null,
+                sexualRelations = if (permsFull.shareSexualActivity) entry.sexualRelations else null,
+                painLevel = if (permsFull.shareSymptomsMoods) entry.painLevel?.toInt() else null,
+                symptoms = if (permsFull.shareSymptomsMoods) entry.symptoms else null
+            )
+        }
+
+        assertEquals(2, filteredFull.size)
+        // Zero flow entry preserves intensity = 0 (not 1)
+        assertEquals(0, filteredFull[0].intensity)
+        assertEquals("Mild headache and fatigue", filteredFull[0].notes)
+        assertEquals("protected", filteredFull[0].sexualRelations)
+        assertEquals(2, filteredFull[0].painLevel)
+        assertEquals("Headaches", filteredFull[0].symptoms)
+
+        // Bleeding entry preserves original intensity = 4
+        assertEquals(4, filteredFull[1].intensity)
+        assertEquals("Heavy bleeding", filteredFull[1].notes)
+
+        // Case B: shareCyclePhase = true, shareFlowIntensity = false (redacted bleeding)
+        val permsRedactedFlow = permsFull.copy(shareFlowIntensity = false)
+        val filteredRedacted = entries.map { entry ->
+            val originalIntensity = entry.intensity?.toInt() ?: 0
+            SyncEntry(
+                date = entry.date,
+                intensity = when {
+                    permsRedactedFlow.shareFlowIntensity -> originalIntensity
+                    permsRedactedFlow.shareCyclePhase && originalIntensity > 0 -> 1
+                    else -> 0
+                },
+                notes = if (permsRedactedFlow.shareSymptomsMoods) entry.notes else null,
+                sexualRelations = if (permsRedactedFlow.shareSexualActivity) entry.sexualRelations else null,
+                painLevel = if (permsRedactedFlow.shareSymptomsMoods) entry.painLevel?.toInt() else null,
+                symptoms = if (permsRedactedFlow.shareSymptomsMoods) entry.symptoms else null
+            )
+        }
+
+        // Bleeding entry clamped to 1, but zero-flow entry stays 0
+        assertEquals(0, filteredRedacted[0].intensity, "Flow 0 must remain 0 even when cycle phase is shared")
+        assertEquals(1, filteredRedacted[1].intensity, "Bleeding entry clamped to 1 when shareFlowIntensity is false")
+        assertEquals("Headaches", filteredRedacted[0].symptoms)
+        assertEquals(2, filteredRedacted[0].painLevel)
+    }
+
+    @Test
+    fun testDecoupledSymptomsSyncWhenShareCyclePhaseFalse() {
+        val entries = listOf(
+            // Entry 1: Zero flow, has symptoms & pain & note
+            CycleEntry(1L, "2024-03-01", 0, "Normal check-in note", null, 3, "Cramps"),
+            // Entry 2: Bleeding flow, has pregnancy test note, no other symptoms/pain/intimacy
+            CycleEntry(2L, "2024-03-02", 3, "Took a pregnancy test this morning", null, 0, null),
+            // Entry 3: Bleeding flow, NO symptoms, NO pain, NO intimacy, NO notes
+            CycleEntry(3L, "2024-03-03", 4, null, null, 0, null),
+            // Entry 4: Zero flow, sexual intimacy only
+            CycleEntry(4L, "2024-03-04", 0, null, "protected", null, null),
+            // Entry 5: Bleeding flow, symptoms + intimacy + general note
+            CycleEntry(5L, "2024-03-05", 2, "General note", "unprotected", 4, "Headaches")
+        )
+
+        // Case A: shareCyclePhase = false, shareSymptomsMoods = true, shareSexualActivity = true, sharePregnancyTests = false
+        val perms = PartnerPermissions(
+            shareCyclePhase = false,
+            shareFlowIntensity = false,
+            shareSymptomsMoods = true,
+            shareBirthControl = false,
+            sharePregnancyTests = false,
+            shareSexualActivity = true
+        )
+
+        fun filterEntries(perms: PartnerPermissions, inputEntries: List<CycleEntry>): List<SyncEntry> {
+            return if (!perms.shareCyclePhase) {
+                inputEntries.mapNotNull { entry ->
+                    val rawNotes = if (perms.shareSymptomsMoods) entry.notes else null
+                    val safeNotes = if (rawNotes != null && !perms.sharePregnancyTests) {
+                        val lower = rawNotes.lowercase()
+                        if (lower.contains("pregnan") || lower.contains("hcg") || lower.contains("positive") || lower.contains("negative")) {
+                            null
+                        } else {
+                            rawNotes
+                        }
+                    } else {
+                        rawNotes
+                    }
+                    val sharedSymptoms = if (perms.shareSymptomsMoods) entry.symptoms else null
+                    val sharedPainLevel = if (perms.shareSymptomsMoods) entry.painLevel?.toInt() else null
+                    val sharedSexualRelations = if (perms.shareSexualActivity) entry.sexualRelations else null
+
+                    val hasSharedSymptomsMoods = perms.shareSymptomsMoods && (
+                        !sharedSymptoms.isNullOrEmpty() ||
+                        (entry.painLevel?.toLong() ?: 0L) > 0L ||
+                        !safeNotes.isNullOrBlank()
+                    )
+                    val hasSharedSexualActivity = perms.shareSexualActivity && !sharedSexualRelations.isNullOrEmpty()
+
+                    if (hasSharedSymptomsMoods || hasSharedSexualActivity) {
+                        SyncEntry(
+                            date = entry.date,
+                            intensity = 0,
+                            notes = safeNotes,
+                            sexualRelations = sharedSexualRelations,
+                            painLevel = sharedPainLevel,
+                            symptoms = sharedSymptoms
+                        )
+                    } else {
+                        null
+                    }
+                }
+            } else {
+                inputEntries.map { entry ->
+                    SyncEntry(entry.date, entry.intensity?.toInt() ?: 0, entry.notes)
+                }
+            }
+        }
+
+        val filtered = filterEntries(perms, entries)
+
+        // Entry 1 kept (symptoms & pain), intensity exported as 0
+        val entry1 = filtered.find { it.date == "2024-03-01" }
+        assertNotNull(entry1)
+        assertEquals(0, entry1.intensity)
+        assertEquals("Cramps", entry1.symptoms)
+        assertEquals(3, entry1.painLevel)
+        assertEquals("Normal check-in note", entry1.notes)
+
+        // Entry 2 EXCLUDED: note redacted due to sharePregnancyTests = false, no other symptoms/pain/intimacy
+        val entry2 = filtered.find { it.date == "2024-03-02" }
+        assertNull(entry2, "Entry with only redacted pregnancy note must be excluded when shareCyclePhase is false")
+
+        // Entry 3 EXCLUDED: bleeding only, no symptoms/pain/intimacy/notes
+        val entry3 = filtered.find { it.date == "2024-03-03" }
+        assertNull(entry3, "Entry with only bleeding and no symptoms/moods/intimacy must be excluded")
+
+        // Entry 4 kept (sexual activity only), intensity exported as 0
+        val entry4 = filtered.find { it.date == "2024-03-04" }
+        assertNotNull(entry4)
+        assertEquals(0, entry4.intensity)
+        assertEquals("protected", entry4.sexualRelations)
+
+        // Entry 5 kept (symptoms + intimacy + note), intensity exported as 0
+        val entry5 = filtered.find { it.date == "2024-03-05" }
+        assertNotNull(entry5)
+        assertEquals(0, entry5.intensity, "Menstrual bleeding data must not leak; intensity must be 0")
+        assertEquals("Headaches", entry5.symptoms)
+        assertEquals("unprotected", entry5.sexualRelations)
+
+        assertEquals(3, filtered.size)
+
+        // Case B: Both shareSymptomsMoods = false and shareSexualActivity = false -> completely empty
+        val permsNone = perms.copy(shareSymptomsMoods = false, shareSexualActivity = false)
+        val filteredNone = filterEntries(permsNone, entries)
+        assertTrue(filteredNone.isEmpty(), "When shareCyclePhase, shareSymptomsMoods, and shareSexualActivity are all false, entries must be empty")
+    }
+
+    @Test
+    fun testImportSyncPayloadRefreshesCycleTrackerState() {
+        runBlocking {
+            val db = createInMemoryDb()
+            val tracker = CycleTracker(com.novarytm.ffi.RustBridge(), db.cycleQueries, this)
+
+            // Initially tracker has empty state
+            tracker.refreshCycleState()
+            awaitCondition { tracker.loggedDates.value.isEmpty() }
+            assertTrue(tracker.loggedDates.value.isEmpty())
+
+            // Simulate partner sync payload transaction execution
+            val partnerEntries = listOf(
+                SyncEntry(date = "2024-03-01", intensity = 3, notes = "Day 1"),
+                SyncEntry(date = "2024-03-02", intensity = 2, notes = "Day 2"),
+                SyncEntry(date = "2024-03-03", intensity = 0, notes = "Check-in", symptoms = "Cramps")
+            )
+
+            db.transaction {
+                db.cycleQueries.deleteAllEntries()
+                partnerEntries.forEach { entry ->
+                    db.cycleQueries.insertEntry(
+                        entry.date,
+                        entry.intensity,
+                        entry.notes,
+                        entry.sexualRelations,
+                        entry.painLevel,
+                        entry.symptoms
+                    )
+                }
+            }
+
+            // Immediately after transaction, refreshCycleState() is called
+            tracker.refreshCycleState()
+
+            // StateFlows must immediately update
+            awaitCondition { tracker.loggedDates.value.size == 2 }
+            val loggedDates = tracker.loggedDates.value
+            assertTrue(loggedDates.contains(LocalDate.parse("2024-03-01")))
+            assertTrue(loggedDates.contains(LocalDate.parse("2024-03-02")))
+            assertFalse(loggedDates.contains(LocalDate.parse("2024-03-03")), "0-flow check-in entry should not be counted as bleeding date in loggedDates")
+        }
+    }
 }

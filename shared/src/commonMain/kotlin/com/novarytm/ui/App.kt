@@ -113,10 +113,16 @@ fun App(database: NovarytmDatabase, driver: SqlDriver, rustBridge: RustBridge, s
         }
     }
     
+    val cycleQueries = database.cycleQueries
+    val coroutineScope = rememberCoroutineScope { GlobalExceptionHandler }
+    val cycleTracker = remember(rustBridge, cycleQueries, coroutineScope) { 
+        CycleTracker(rustBridge, cycleQueries, coroutineScope) 
+    }
+
     val googleAuthManager = rememberGoogleAuthManager(storage)
     val googleDriveManager = remember(googleAuthManager) { GoogleDriveManager(googleAuthManager, httpClient) }
-    val syncManager = remember(database, rustBridge, storage, googleDriveManager, isInitializing) { 
-        if (isInitializing) null else SyncManager(database, rustBridge, storage, googleDriveManager) 
+    val syncManager = remember(database, rustBridge, storage, googleDriveManager, cycleTracker, isInitializing) { 
+        if (isInitializing) null else SyncManager(database, rustBridge, storage, googleDriveManager, cycleTracker = cycleTracker) 
     }
     
     var onboardingStage by remember { mutableStateOf<OnboardingStage>(OnboardingStage.Welcome) }
@@ -140,23 +146,15 @@ fun App(database: NovarytmDatabase, driver: SqlDriver, rustBridge: RustBridge, s
     }
     var showLogScreen by remember { mutableStateOf(false) }
 
-    val cycleQueries = database.cycleQueries
     val latestEntries by remember(isInitializing) {
         if (isInitializing) kotlinx.coroutines.flow.flowOf(emptyList())
         else cycleQueries.selectAllEntries().asFlow().mapToList(Dispatchers.IO)
     }.collectAsState(initial = emptyList())
 
-
-    
     val birthControl by remember(isInitializing) {
         if (isInitializing) kotlinx.coroutines.flow.flowOf(null)
         else cycleQueries.getBirthControl().asFlow().mapToOneOrNull(Dispatchers.IO)
     }.collectAsState(initial = null)
-    
-    val coroutineScope = rememberCoroutineScope { GlobalExceptionHandler }
-    val cycleTracker = remember(rustBridge, cycleQueries, coroutineScope) { 
-        CycleTracker(rustBridge, cycleQueries, coroutineScope) 
-    }
     var triggerStepUpAuth by remember { mutableStateOf(0) }
     var stepUpFallbackTrigger by remember { mutableStateOf(0) }
     var retryTrigger by remember { mutableStateOf(0) }
