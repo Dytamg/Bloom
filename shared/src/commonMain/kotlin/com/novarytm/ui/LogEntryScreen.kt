@@ -2,6 +2,11 @@
 
 package com.novarytm.ui
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -16,16 +21,21 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronLeft
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.WaterDrop
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import com.novarytm.utils.AppStrings
 import kotlin.time.Clock
 import kotlin.math.roundToInt
 import kotlinx.datetime.*
@@ -40,7 +50,7 @@ fun LogEntryScreen(
     onSave: (startDate: String, endDate: String, intensity: Int, notes: String, sexualRelations: String?, painLevel: Int?, symptoms: String?) -> Unit,
     onCancel: () -> Unit
 ) {
-    var selectedIntensity by remember { mutableStateOf(initialEntry?.intensity ?: 3) }
+    var selectedIntensity by remember { mutableStateOf(initialEntry?.intensity ?: 0) }
     var notes by remember { mutableStateOf(initialEntry?.notes ?: "") }
     var painLevel by remember { mutableStateOf(initialEntry?.painLevel?.toFloat() ?: 0f) }
     var selectedSymptoms by remember { 
@@ -135,22 +145,55 @@ fun LogEntryScreen(
                 )
             }
         }
-        Spacer(Modifier.height(32.dp))
+        if (selectedIntensity == 0) {
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = AppStrings.get("flow_0_desc"),
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.Gray,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 16.dp)
+            )
+            Spacer(Modifier.height(22.dp))
+        } else {
+            Spacer(Modifier.height(32.dp))
+        }
         
-        val painDisplay = if (painLevel.toInt() == 0) "0/10 (No pain)" else "${painLevel.toInt()}/10"
+        val haptic = LocalHapticFeedback.current
+        val painInt = painLevel.roundToInt()
+        val painTrackColor by animateColorAsState(
+            targetValue = when {
+                painInt == 0 -> periodColor
+                painInt <= 3 -> periodColor
+                painInt <= 6 -> Color(0xFFE06D53)
+                else -> Color(0xFFC62828)
+            },
+            animationSpec = tween(durationMillis = 200),
+            label = "PainTrackColor"
+        )
+        val painDisplay = if (painInt == 0) "0/10 (No pain)" else "$painInt/10"
         Text("Pain Level: $painDisplay", style = MaterialTheme.typography.titleMedium)
         Slider(
             value = painLevel,
-            onValueChange = { if (!isReadOnly) painLevel = it },
+            onValueChange = { newValue ->
+                if (!isReadOnly) {
+                    val oldStep = painLevel.roundToInt()
+                    val newStep = newValue.roundToInt()
+                    if (oldStep != newStep) {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    }
+                    painLevel = newValue
+                }
+            },
             valueRange = 0f..10f,
             steps = 9,
             enabled = !isReadOnly,
             colors = SliderDefaults.colors(
-                thumbColor = periodColor,
-                activeTrackColor = periodColor,
-                inactiveTrackColor = periodColor.copy(alpha = 0.2f),
+                thumbColor = painTrackColor,
+                activeTrackColor = painTrackColor,
+                inactiveTrackColor = painTrackColor.copy(alpha = 0.2f),
                 activeTickColor = Color.White.copy(alpha = 0.7f),
-                inactiveTickColor = periodColor.copy(alpha = 0.5f)
+                inactiveTickColor = painTrackColor.copy(alpha = 0.5f)
             ),
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).semantics {
                 contentDescription = "Pain Level $painDisplay"
@@ -253,33 +296,65 @@ fun LogEntryScreen(
 
 @Composable
 fun IntensityButton(level: Int, isSelected: Boolean, color: Color, onClick: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+    val backgroundColor by animateColorAsState(
+        targetValue = if (isSelected) color else color.copy(alpha = 0.1f),
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "IntensityBackground"
+    )
+    val contentColor by animateColorAsState(
+        targetValue = if (isSelected) Color.White else color,
+        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        label = "IntensityContent"
+    )
+    val scale by animateFloatAsState(
+        targetValue = if (isSelected) 1.08f else 1.0f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMediumLow
+        ),
+        label = "IntensityScale"
+    )
+
+    val flowLabel = when (level) {
+        0 -> AppStrings.get("flow_0")
+        1 -> "Spot"
+        2 -> "Light"
+        3 -> "Med"
+        4 -> "Heavy"
+        5 -> "Very"
+        else -> ""
+    }
+    val selectionState = if (isSelected) "selected" else "not selected"
+    val contentDesc = "$flowLabel flow, level $level, $selectionState"
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.semantics(mergeDescendants = true) {
+            contentDescription = contentDesc
+        }
+    ) {
         Box(
             modifier = Modifier
                 .size(48.dp)
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                }
                 .clip(RoundedCornerShape(16.dp))
-                .background(if (isSelected) color else color.copy(alpha = 0.1f))
+                .background(backgroundColor)
                 .clickable { onClick() },
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = Icons.Default.WaterDrop,
+                imageVector = if (level == 0) Icons.Outlined.CheckCircle else Icons.Default.WaterDrop,
                 contentDescription = null,
-                tint = if (isSelected) Color.White else color,
+                tint = contentColor,
                 modifier = Modifier.size(24.dp)
             )
         }
         Spacer(Modifier.height(4.dp))
         Text(
-            text = when(level) {
-                0 -> "None"
-                1 -> "Spot"
-                2 -> "Light"
-                3 -> "Med"
-                4 -> "Heavy"
-                5 -> "Very"
-                else -> ""
-            },
+            text = flowLabel,
             style = MaterialTheme.typography.labelSmall,
             color = if (isSelected) color else Color.Gray
         )

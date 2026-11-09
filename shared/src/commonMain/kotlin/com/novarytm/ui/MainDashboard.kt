@@ -30,6 +30,7 @@ import com.novarytm.db.CycleEntry
 import com.novarytm.ffi.RustBridge
 import com.novarytm.tracker.CycleTracker
 import com.novarytm.sync.SyncManager
+import com.novarytm.utils.AppStrings
 import kotlinx.datetime.*
 import kotlinx.coroutines.launch
 
@@ -170,11 +171,53 @@ fun MainDashboard(
                     totalDays = avgLength
                 )
             } else {
+                val isAwaitingPeriod = !isPartnerView && latestCycleStartDate == null && entries.isNotEmpty()
                 Box(
-                    modifier = Modifier.size(240.dp).clip(CircleShape).background(Color(0xFFF3F4F6)),
+                    modifier = Modifier.size(240.dp).clip(CircleShape).background(Color(0xFFF3F4F6)).padding(24.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(if (!canShowPhase) "Phase hidden by partner" else if (entries.isEmpty()) "No cycle logs yet" else "Phase hidden", style = MaterialTheme.typography.titleMedium, color = Color.Gray)
+                    if (!canShowPhase) {
+                        Text(
+                            text = "Phase hidden by partner",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.Gray,
+                            textAlign = TextAlign.Center
+                        )
+                    } else if (entries.isEmpty()) {
+                        Text(
+                            text = "No cycle logs yet",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.Gray,
+                            textAlign = TextAlign.Center
+                        )
+                    } else if (isAwaitingPeriod) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = AppStrings.get("awaiting_period_title"),
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                                color = Color(0xFF3E3636),
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                text = AppStrings.get("awaiting_period_subtitle"),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.Gray,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    } else {
+                        Text(
+                            text = "Phase hidden",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.Gray,
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
             }
         }
