@@ -53,10 +53,40 @@ fun CyclePhaseVisualizer(phase: String, currentDay: Int, totalDays: Int) {
         label = "DotBreathAlpha"
     )
 
-    val appColors = LocalAppColors.current
-    val primaryColor = appColors.primary
-    val secondaryColor = appColors.background // Replaces the F3F4F6 background track
-    val fertileColor = appColors.secondary
+    // Harmonic 4-phase color palette
+    val menstrualColor = Color(0xFFD48C95)   // Gentle Rose / Coral (Days 1–5)
+    val follicularColor = Color(0xFFE8A598)  // Warm Peach / Apricot (Days 6 to Fertile Start)
+    val fertileColor = Color(0xFF88BC8F)     // Soft Sage / Mint Green (Fertile Window / Ovulation)
+    val lutealColor = Color(0xFFB5838D)      // Delicate Lavender / Mauve (Post-ovulation to cycle end)
+
+    val safeTotal = kotlin.math.max(21, totalDays).toFloat()
+    val ovulationDay = kotlin.math.max(7f, safeTotal - 14f)
+    val menstrualEnd = kotlin.math.min(5f, safeTotal)
+    val fertileStart = kotlin.math.max(menstrualEnd, ovulationDay - 4f)
+    val fertileEnd = kotlin.math.min(safeTotal, ovulationDay + 2f)
+
+    // Dynamic active phase color resolution
+    val activePhaseColor = when {
+        phase.contains("Menstrual", ignoreCase = true) || phase.contains("Period", ignoreCase = true) -> menstrualColor
+        phase.contains("Follicular", ignoreCase = true) -> follicularColor
+        phase.contains("Ovulat", ignoreCase = true) || phase.contains("Fertil", ignoreCase = true) -> fertileColor
+        phase.contains("Luteal", ignoreCase = true) -> lutealColor
+        currentDay in 1..menstrualEnd.toInt() -> menstrualColor
+        currentDay <= fertileStart.toInt() -> follicularColor
+        currentDay <= fertileEnd.toInt() -> fertileColor
+        currentDay > fertileEnd.toInt() && currentDay <= safeTotal -> lutealColor
+        else -> menstrualColor
+    }
+
+    data class PhaseSegment(val color: Color, val startDay: Float, val endDay: Float)
+    val segments = remember(safeTotal, ovulationDay, menstrualEnd, fertileStart, fertileEnd) {
+        listOf(
+            PhaseSegment(menstrualColor, 0f, menstrualEnd),
+            PhaseSegment(follicularColor, menstrualEnd, fertileStart),
+            PhaseSegment(fertileColor, fertileStart, fertileEnd),
+            PhaseSegment(lutealColor, fertileEnd, safeTotal)
+        )
+    }
 
     Box(
         contentAlignment = Alignment.Center,
@@ -68,38 +98,52 @@ fun CyclePhaseVisualizer(phase: String, currentDay: Int, totalDays: Int) {
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             val strokeWidth = 8.dp.toPx()
-            
-            // Background circle
-            drawCircle(
-                color = secondaryColor,
-                style = Stroke(width = strokeWidth)
-            )
 
-            // Progress arc
-            drawArc(
-                color = primaryColor,
-                startAngle = -90f,
-                sweepAngle = 360f * animatedProgress,
-                useCenter = false,
-                style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
-            )
+            if (totalDays <= 0) {
+                // Fallback track when cycle length is unknown
+                drawCircle(
+                    color = Color.LightGray.copy(alpha = 0.25f),
+                    style = Stroke(width = strokeWidth)
+                )
+            } else {
+                // 1. Draw 4 background phase segments around single dial track at soft gentle opacity (0.25f)
+                segments.forEach { seg ->
+                    if (seg.endDay > seg.startDay) {
+                        val segStartAngle = -90f + (seg.startDay / safeTotal) * 360f
+                        val segSweepAngle = ((seg.endDay - seg.startDay) / safeTotal) * 360f
+                        drawArc(
+                            color = seg.color.copy(alpha = 0.25f),
+                            startAngle = segStartAngle,
+                            sweepAngle = segSweepAngle,
+                            useCenter = false,
+                            style = Stroke(width = strokeWidth, cap = StrokeCap.Butt)
+                        )
+                    }
+                }
 
-            // Fertile window indicator computed dynamically from totalDays
-            val safeTotal = kotlin.math.max(21, totalDays).toFloat()
-            val ovulationDay = kotlin.math.max(7, totalDays - 14).toFloat()
-            val fertileStartDay = kotlin.math.max(5f, ovulationDay - 4f)
-            val fertileEndDay = kotlin.math.min(safeTotal, ovulationDay + 1f)
-            val fertileStartAngle = -90f + (fertileStartDay / safeTotal) * 360f
-            val fertileSweepAngle = ((fertileEndDay - fertileStartDay + 1f) / safeTotal) * 360f
-            drawArc(
-                color = fertileColor,
-                startAngle = fertileStartAngle,
-                sweepAngle = fertileSweepAngle,
-                useCenter = false,
-                style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
-            )
+                // 2. Active progress arc sweeping over segments at full vibrant opacity with matching phase colors
+                if (animatedProgress > 0f) {
+                    val currentProgressDay = animatedProgress * safeTotal
+                    segments.forEach { seg ->
+                        if (seg.endDay > seg.startDay && currentProgressDay > seg.startDay) {
+                            val segStartAngle = -90f + (seg.startDay / safeTotal) * 360f
+                            val activeDays = kotlin.math.min(seg.endDay, currentProgressDay) - seg.startDay
+                            val activeSweepAngle = (activeDays / safeTotal) * 360f
+                            if (activeSweepAngle > 0f) {
+                                drawArc(
+                                    color = seg.color,
+                                    startAngle = segStartAngle,
+                                    sweepAngle = activeSweepAngle,
+                                    useCenter = false,
+                                    style = Stroke(width = strokeWidth, cap = StrokeCap.Butt)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
 
-            // Active current-day indicator dot with gentle breathing glow
+            // 3. Active current-day indicator dot with gentle breathing glow aura using active phase color
             if (currentDay > 0 && animatedProgress > 0.005f) {
                 val currentAngle = -90f + 360f * animatedProgress
                 val angleRad = (currentAngle * kotlin.math.PI / 180.0)
@@ -112,14 +156,14 @@ fun CyclePhaseVisualizer(phase: String, currentDay: Int, totalDays: Int) {
 
                 // Outer gentle breathing glow aura
                 drawCircle(
-                    color = primaryColor.copy(alpha = breathAlpha * 0.4f),
+                    color = activePhaseColor.copy(alpha = breathAlpha * 0.4f),
                     radius = baseDotRadius * 2.2f * breathScale,
                     center = dotCenter
                 )
 
                 // Inner breathing glow aura
                 drawCircle(
-                    color = primaryColor.copy(alpha = breathAlpha * 0.7f),
+                    color = activePhaseColor.copy(alpha = breathAlpha * 0.7f),
                     radius = baseDotRadius * 1.5f * breathScale,
                     center = dotCenter
                 )
@@ -131,9 +175,9 @@ fun CyclePhaseVisualizer(phase: String, currentDay: Int, totalDays: Int) {
                     center = dotCenter
                 )
 
-                // Inner solid dot in primary color
+                // Inner solid dot in active phase color
                 drawCircle(
-                    color = primaryColor,
+                    color = activePhaseColor,
                     radius = baseDotRadius,
                     center = dotCenter
                 )
@@ -155,7 +199,7 @@ fun CyclePhaseVisualizer(phase: String, currentDay: Int, totalDays: Int) {
             Text(
                 text = phase,
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
-                color = primaryColor,
+                color = activePhaseColor,
                 modifier = Modifier.padding(top = 4.dp)
             )
         }

@@ -1,24 +1,24 @@
 # Graph Report - Bloom-main  (2026-11-09)
 
 ## Corpus Check
-- 77 files · ~48,844 words
+- 77 files · ~49,270 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 29 file(s) not represented in the graph (top: .xml 18, (none) 3, .properties 3)
 
 ## Summary
-- 994 nodes · 1884 edges · 86 communities (23 shown, 63 thin omitted)
-- Extraction: 96% EXTRACTED · 4% INFERRED · 0% AMBIGUOUS · INFERRED: 84 edges (avg confidence: 0.86)
+- 996 nodes · 1886 edges · 84 communities (24 shown, 60 thin omitted)
+- Extraction: 95% EXTRACTED · 5% INFERRED · 0% AMBIGUOUS · INFERRED: 85 edges (avg confidence: 0.86)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `a3ce642b`
+- Built from commit: `32f4f396`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
 ## Community Hubs (Navigation)
 - CalendarScreen
 - Rust Cryptographic & Cycle Core
-- MainActivity.kt
+- androidMain/kotlin/com/novarytm/auth/BiometricAuthenticator.kt
 - CycleTracker
 - JNI FFI RustBridge Contract
 - iOS Keychain Secure Storage
@@ -30,9 +30,9 @@
 - Google OAuth2 Authentication
 - Health Hub & Contraception UI
 - Google Drive REST Client
-- LogEntryScreen.kt
 - Android Alarm & Notification Engine
 - iOS SwiftUI Host Bridge
+- LockScreen.kt
 - SQLCipher Android Database Driver
 - Session State Machine
 - Biometric Prompt & LockScreen
@@ -50,23 +50,21 @@
 - Theme Color Palettes
 - iOS Notification Scheduler
 - Common Back Navigation Expect
-- RecoveryKeyWarningScreen
+- createDatabase
 - Recovery Key Input Screen
-- ConnectPartnerScreen.kt
+- Color
 - iOS Back Navigation Stub
 - AppContent
 - Rust Cargo Manifest
 - Zero-Permission Privacy Model
-- SyncManagerTest
+- MainActivity.kt
 - ShareSyncCodeScreen.kt
-- SyncEntry
+- iosMain/kotlin/com/novarytm/db/DatabaseHelper.kt
 - query_graph.sh
 - generate_brand_assets.py
-- PartnerPermissionsScreen
+- alignment
 - ConnectPartnerScreen.kt
-- CreatePinScreen
-- ColumnAdapter
-- PartnerSettingsScreen
+- LogEntryScreen.kt
 
 ## God Nodes (most connected - your core abstractions)
 1. `SecureStorageManager` - 44 edges
@@ -76,11 +74,13 @@
 5. `SecureStorageManager` - 32 edges
 6. `CycleTracker` - 32 edges
 7. `SyncManager` - 29 edges
-8. `SyncManagerTest` - 21 edges
-9. `App()` - 21 edges
-10. `GoogleDriveManager` - 20 edges
+8. `App()` - 21 edges
+9. `SyncManagerTest` - 21 edges
+10. `GoogleDriveManager` - 19 edges
 
 ## Surprising Connections (you probably didn't know these)
+- `1. Mandatory Graph-First Discovery (Before Editing)` --references--> `CyclePhaseVisualizer()`  [INFERRED]
+  GEMINI.md → shared/src/commonMain/kotlin/com/novarytm/ui/CyclePhaseVisualizer.kt
 - `1. Mandatory Graph-First Discovery (Before Editing)` --references--> `GoogleDriveManager`  [INFERRED]
   GEMINI.md → shared/src/commonMain/kotlin/com/novarytm/sync/GoogleDriveManager.kt
 - `1. Mandatory Graph-First Discovery (Before Editing)` --references--> `SessionManager`  [INFERRED]
@@ -89,8 +89,6 @@
   GEMINI.md → shared/src/commonMain/kotlin/com/novarytm/tracker/CycleTracker.kt
 - `1. Mandatory Graph-First Discovery (Before Editing)` --references--> `SyncManager`  [INFERRED]
   GEMINI.md → shared/src/commonMain/kotlin/com/novarytm/sync/SyncManager.kt
-- `1. Mandatory Graph-First Discovery (Before Editing)` --references--> `CyclePhaseVisualizer()`  [INFERRED]
-  GEMINI.md → shared/src/commonMain/kotlin/com/novarytm/ui/CyclePhaseVisualizer.kt
 
 ## Import Cycles
 - None detected.
@@ -100,26 +98,26 @@
 - **Secure Partner Synchronization and Storage Architecture** — readme_secure_partner_pairing, playstore_privacy_policy_google_drive_sync, walkthrough_ios_google_auth_lockout_fix, readme_asymmetric_access_control [EXTRACTED 1.00]
 - **Database Initialization, Rekeying, and Decryption Sequence** — readme_sqldelight_database, walkthrough_splash_screen_deadlock_fix, walkthrough_sqlcipher_raw_key_bypass_fix, playstore_privacy_policy_cryptographic_suite [INFERRED 0.95]
 
-## Communities (86 total, 63 thin omitted)
+## Communities (84 total, 60 thin omitted)
 
 ### Community 0 - "CalendarScreen"
-Cohesion: 0.11
-Nodes (19): SplashScreen(), CalendarGrid(), CalendarHeader(), CalendarLegend(), CalendarScreen(), HistoryGroupItem(), HistoryItem(), LegendItem() (+11 more)
+Cohesion: 0.15
+Nodes (14): CalendarGrid(), CalendarHeader(), CalendarLegend(), CalendarScreen(), HistoryGroupItem(), HistoryItem(), LegendItem(), monthForPage() (+6 more)
 
 ### Community 1 - "Rust Cryptographic & Cycle Core"
 Cohesion: 0.05
 Nodes (63): analyze_cycle_history_internal(), calculate_next_cycle_native_internal(), calculate_phase_internal(), decrypt_from_sync_internal(), decrypt_payload_internal(), derive_key_legacy(), derive_key_secure(), encrypt_data() (+55 more)
 
-### Community 2 - "MainActivity.kt"
-Cohesion: 0.05
-Nodes (10): MainActivity, BiometricPromptEffect(), AuthenticationCallback, createDatabase(), ColumnAdapter, ColumnAdapter, DriverFactory, BiometricPromptEffect() (+2 more)
+### Community 2 - "androidMain/kotlin/com/novarytm/auth/BiometricAuthenticator.kt"
+Cohesion: 0.14
+Nodes (3): BiometricPromptEffect(), AuthenticationCallback, BiometricPromptEffect()
 
 ### Community 3 - "CycleTracker"
-Cohesion: 0.13
-Nodes (4): CycleAnalysis, CyclePrediction, CyclePredictionResult, CycleTracker
+Cohesion: 0.07
+Nodes (13): SyncBirthControl, SyncEntry, SyncPayload, SyncPregnancyTest, SyncReminder, CycleAnalysis, CyclePrediction, CyclePredictionResult (+5 more)
 
 ### Community 4 - "JNI FFI RustBridge Contract"
-Cohesion: 0.07
+Cohesion: 0.06
 Nodes (3): RustBridge, PartnerPermissions, RustBridge
 
 ### Community 8 - "Architecture & Play Store Governance"
@@ -135,7 +133,7 @@ Cohesion: 0.11
 Nodes (12): BCOption, BirthControlTab(), ContraceptiveMethodRing(), HealthHubScreen(), InfoChip(), PregnancyTestTab(), PrivacyNote(), QuizOverlay() (+4 more)
 
 ### Community 13 - "Google Drive REST Client"
-Cohesion: 0.20
+Cohesion: 0.18
 Nodes (6): AboutResponse, DriveFileAppFolder, DriveFileListAppFolder, DriveStorageFullException, GoogleDriveManager, StorageQuota
 
 ### Community 17 - "iOS SwiftUI Host Bridge"
@@ -178,41 +176,45 @@ Nodes (5): Blooming Flower Motif, Bloom Brand Logo Mark, Circular App Icon / Bad
 Cohesion: 0.83
 Nodes (4): Adaptive Icon Circular Masking, Bloom Floral Rebirth Brand Motif, Bloom Round Launcher Icon (xxxhdpi), Round Launcher Icon Design
 
+### Community 39 - "createDatabase"
+Cohesion: 0.23
+Nodes (4): createDatabase(), ColumnAdapter, ColumnAdapter, DriverFactory
+
 ### Community 44 - "AppContent"
-Cohesion: 0.24
-Nodes (5): 1. Mandatory Graph-First Discovery (Before Editing), App(), AppContent(), BiometricsSetup, LoginScreen()
-
-### Community 58 - "SyncManagerTest"
-Cohesion: 0.25
-Nodes (3): PartnerPermissions, groupPeriodEntries(), SyncManagerTest
-
-### Community 61 - "SyncEntry"
-Cohesion: 0.53
-Nodes (5): SyncBirthControl, SyncEntry, SyncPayload, SyncPregnancyTest, SyncReminder
+Cohesion: 0.20
+Nodes (7): 1. Mandatory Graph-First Discovery (Before Editing), App(), AppContent(), BiometricsSetup, SplashScreen(), LoginScreen(), MainViewController()
 
 ### Community 71 - "generate_brand_assets.py"
 Cohesion: 0.13
 Nodes (9): extract_clean_artwork(), extract_original_logo(), generate_legacy_icon(), main(), make_antialiased_mask(), render_artwork_on_canvas(), create_showcase(), ImageChops_multiply_alpha() (+1 more)
 
+### Community 72 - "alignment"
+Cohesion: 0.23
+Nodes (3): BirthControlQuiz(), PartnerPermissionsScreen(), PermissionItem()
+
+### Community 81 - "LogEntryScreen.kt"
+Cohesion: 0.14
+Nodes (4): CustomDateRangePickerDialog(), IntensityButton(), LogEntryScreen(), toHumanReadable()
+
 ## Knowledge Gaps
-- **21 isolated node(s):** `Restore`, `Welcome`, `ShareSyncCode`, `shared`, `rust_core` (+16 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 340 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **63 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **21 isolated node(s):** `ShareSyncCode`, `Welcome`, `Restore`, `shared`, `rust_core` (+16 more)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 342 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **60 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `App()` connect `AppContent` to `CalendarScreen`, `MainActivity.kt`, `CycleTracker`, `SyncManager`, `ConnectPartnerScreen.kt`, `SessionManager.kt`, `Google Drive REST Client`, `App.kt`, `Session State Machine`?**
-  _High betweenness centrality (0.130) - this node is a cross-community bridge._
+- **Why does `App()` connect `AppContent` to `CycleTracker`, `SyncManager`, `Color`, `SessionManager.kt`, `Google Drive REST Client`, `Session State Machine`, `App.kt`, `MainActivity.kt`?**
+  _High betweenness centrality (0.112) - this node is a cross-community bridge._
 - **Are the 15 inferred relationships involving `AppContent()` (e.g. with `1. Mandatory Graph-First Discovery (Before Editing)` and `BiometricsSetupScreen()`) actually correct?**
   _`AppContent()` has 15 INFERRED edges - model-reasoned connections that need verification._
-- **What connects `Restore`, `Welcome`, `ShareSyncCode` to the rest of the system?**
+- **What connects `ShareSyncCode`, `Welcome`, `Restore` to the rest of the system?**
   _21 weakly-connected nodes found - possible documentation gaps or missing edges._
-- **Should `CalendarScreen` be split into smaller, more focused modules?**
-  _Cohesion score 0.10873440285204991 - nodes in this community are weakly interconnected._
-- **Why does `MainViewController()` connect `MainActivity.kt` to `iOS Keychain Secure Storage`, `AppContent`, `JNI FFI RustBridge Contract`?**
-  _High betweenness centrality (0.088) - this node is a cross-community bridge._
 - **Should `Rust Cryptographic & Cycle Core` be split into smaller, more focused modules?**
   _Cohesion score 0.052795031055900624 - nodes in this community are weakly interconnected._
-- **Why does `AppContent()` connect `AppContent` to `CalendarScreen`, `CycleTracker`, `SyncManager`, `Recovery Key Input Screen`, `PartnerPermissionsScreen`, `RecoveryKeyWarningScreen`, `ConnectPartnerScreen.kt`, `CreatePinScreen`, `Health Hub & Contraception UI`, `App.kt`, `Session State Machine`, `Onboarding Credential Lifecycle`, `Biometric Prompt & LockScreen`, `PartnerSettingsScreen`, `ShareSyncCodeScreen.kt`, `Navigation Screen Routes`?**
-  _High betweenness centrality (0.071) - this node is a cross-community bridge._
+- **Why does `MainViewController()` connect `AppContent` to `iOS Keychain Secure Storage`, `iosMain/kotlin/com/novarytm/db/DatabaseHelper.kt`, `JNI FFI RustBridge Contract`, `createDatabase`?**
+  _High betweenness centrality (0.087) - this node is a cross-community bridge._
+- **Should `androidMain/kotlin/com/novarytm/auth/BiometricAuthenticator.kt` be split into smaller, more focused modules?**
+  _Cohesion score 0.13970588235294118 - nodes in this community are weakly interconnected._
+- **Why does `AppContent()` connect `AppContent` to `CalendarScreen`, `CycleTracker`, `SyncManager`, `Recovery Key Input Screen`, `alignment`, `Color`, `ConnectPartnerScreen.kt`, `Health Hub & Contraception UI`, `LogEntryScreen.kt`, `LockScreen.kt`, `Session State Machine`, `Biometric Prompt & LockScreen`, `Onboarding Credential Lifecycle`, `App.kt`, `ShareSyncCodeScreen.kt`, `Navigation Screen Routes`?**
+  _High betweenness centrality (0.074) - this node is a cross-community bridge._

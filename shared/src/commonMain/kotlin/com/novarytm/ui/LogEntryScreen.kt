@@ -141,6 +141,7 @@ fun LogEntryScreen(
                     level = level,
                     isSelected = selectedIntensity == level,
                     color = periodColor,
+                    modifier = Modifier.weight(1f),
                     onClick = { if (!isReadOnly) selectedIntensity = level }
                 )
             }
@@ -295,7 +296,13 @@ fun LogEntryScreen(
 }
 
 @Composable
-fun IntensityButton(level: Int, isSelected: Boolean, color: Color, onClick: () -> Unit) {
+fun IntensityButton(
+    level: Int,
+    isSelected: Boolean,
+    color: Color,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
     val backgroundColor by animateColorAsState(
         targetValue = if (isSelected) color else color.copy(alpha = 0.1f),
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
@@ -316,7 +323,7 @@ fun IntensityButton(level: Int, isSelected: Boolean, color: Color, onClick: () -
     )
 
     val flowLabel = when (level) {
-        0 -> AppStrings.get("flow_0")
+        0 -> "None"
         1 -> "Spot"
         2 -> "Light"
         3 -> "Med"
@@ -329,18 +336,18 @@ fun IntensityButton(level: Int, isSelected: Boolean, color: Color, onClick: () -
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.semantics(mergeDescendants = true) {
+        modifier = modifier.semantics(mergeDescendants = true) {
             contentDescription = contentDesc
         }
     ) {
         Box(
             modifier = Modifier
-                .size(48.dp)
+                .size(44.dp)
                 .graphicsLayer {
                     scaleX = scale
                     scaleY = scale
                 }
-                .clip(RoundedCornerShape(16.dp))
+                .clip(RoundedCornerShape(14.dp))
                 .background(backgroundColor)
                 .clickable { onClick() },
             contentAlignment = Alignment.Center
@@ -349,14 +356,15 @@ fun IntensityButton(level: Int, isSelected: Boolean, color: Color, onClick: () -
                 imageVector = if (level == 0) Icons.Outlined.CheckCircle else Icons.Default.WaterDrop,
                 contentDescription = null,
                 tint = contentColor,
-                modifier = Modifier.size(24.dp)
+                modifier = Modifier.size(22.dp)
             )
         }
         Spacer(Modifier.height(4.dp))
         Text(
             text = flowLabel,
             style = MaterialTheme.typography.labelSmall,
-            color = if (isSelected) color else Color.Gray
+            color = if (isSelected) color else Color.Gray,
+            maxLines = 1
         )
     }
 }

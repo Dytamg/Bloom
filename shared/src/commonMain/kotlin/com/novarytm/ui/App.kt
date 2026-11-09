@@ -9,6 +9,9 @@ import app.cash.sqldelight.coroutines.mapToList
 import app.cash.sqldelight.coroutines.mapToOneOrNull
 import app.cash.sqldelight.db.SqlDriver
 import kotlinx.coroutines.*
+import androidx.compose.animation.*
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -622,110 +625,140 @@ fun AppContent(
                             }
                         }
 
-                        Box(modifier = Modifier.fillMaxSize()) {
-                        when (currentScreen) {
-                            is Screen.Home -> MainDashboard(
-                                rustBridge = rustBridge,
-                                cycleTracker = cycleTracker,
-                                entries = latestEntries,
-                                birthControl = birthControl,
-                                userId = userId,
-                                isPartnerView = state.isPartner,
-                                syncManager = syncManager,
-                                queries = cycleQueries,
-                                onLogClick = { onShowLogScreenChange(true) },
-                                onSettingsClick = { 
-                                    if (state.isPartner) {
-                                        onScreenChange(Screen.PartnerSettings)
+                        AnimatedContent(
+                            targetState = currentScreen,
+                            transitionSpec = {
+                                val targetIdx = when (targetState) {
+                                    is Screen.Home -> 0
+                                    is Screen.Calendar -> 1
+                                    is Screen.Hub -> 2
+                                    is Screen.ShareSyncCode, is Screen.PartnerPermissions, is Screen.PartnerSettings -> 3
+                                }
+                                val initialIdx = when (initialState) {
+                                    is Screen.Home -> 0
+                                    is Screen.Calendar -> 1
+                                    is Screen.Hub -> 2
+                                    is Screen.ShareSyncCode, is Screen.PartnerPermissions, is Screen.PartnerSettings -> 3
+                                }
+                                val animSpec = tween<androidx.compose.ui.unit.IntOffset>(durationMillis = 220, easing = FastOutSlowInEasing)
+                                val fadeSpec = tween<Float>(durationMillis = 220, easing = FastOutSlowInEasing)
+
+                                if (targetIdx > initialIdx) {
+                                    (slideInHorizontally(animationSpec = animSpec) { it } + fadeIn(animationSpec = fadeSpec))
+                                        .togetherWith(slideOutHorizontally(animationSpec = animSpec) { -it / 3 } + fadeOut(animationSpec = fadeSpec))
+                                } else if (targetIdx < initialIdx) {
+                                    (slideInHorizontally(animationSpec = animSpec) { -it } + fadeIn(animationSpec = fadeSpec))
+                                        .togetherWith(slideOutHorizontally(animationSpec = animSpec) { it / 3 } + fadeOut(animationSpec = fadeSpec))
+                                } else {
+                                    fadeIn(animationSpec = fadeSpec).togetherWith(fadeOut(animationSpec = fadeSpec))
+                                }
+                            },
+                            label = "TabMenuSlideTransition",
+                            modifier = Modifier.fillMaxSize()
+                        ) { targetScreen ->
+                            when (targetScreen) {
+                                is Screen.Home -> MainDashboard(
+                                    rustBridge = rustBridge,
+                                    cycleTracker = cycleTracker,
+                                    entries = latestEntries,
+                                    birthControl = birthControl,
+                                    userId = userId,
+                                    isPartnerView = state.isPartner,
+                                    syncManager = syncManager,
+                                    queries = cycleQueries,
+                                    onLogClick = { onShowLogScreenChange(true) },
+                                    onSettingsClick = { 
+                                        if (state.isPartner) {
+                                            onScreenChange(Screen.PartnerSettings)
+                                        } else {
+                                            onScreenChange(Screen.PartnerPermissions)
+                                        }
+                                    },
+                                    onPairClick = { onScreenChange(Screen.ShareSyncCode) },
+                                    currentThemeName = currentThemeName,
+                                    onThemeChange = onThemeChange
+                                )
+                                is Screen.Calendar -> {
+                                    val perms = rustBridge.getPartnerPermissions()
+                                    val hasCalPerms = perms.shareCyclePhase || perms.shareFlowIntensity || perms.shareSymptomsMoods || perms.shareSexualActivity
+                                    if (state.isPartner && !hasCalPerms) {
+                                        LaunchedEffect(Unit) { onScreenChange(Screen.Home) }
+                                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Access revoked by partner") }
                                     } else {
-                                        onScreenChange(Screen.PartnerPermissions)
-                                    }
-                                },
-                                onPairClick = { onScreenChange(Screen.ShareSyncCode) },
-                                currentThemeName = currentThemeName,
-                                onThemeChange = onThemeChange
-                            )
-                            is Screen.Calendar -> {
-                                val perms = rustBridge.getPartnerPermissions()
-                                val hasCalPerms = perms.shareCyclePhase || perms.shareFlowIntensity || perms.shareSymptomsMoods || perms.shareSexualActivity
-                                if (state.isPartner && !hasCalPerms) {
-                                    LaunchedEffect(Unit) { onScreenChange(Screen.Home) }
-                                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Access revoked by partner") }
-                                } else {
-                                    CalendarScreen(
-                                        cycleTracker = cycleTracker, 
-                                        entries = latestEntries,
-                                        isPartner = state.isPartner,
-                                        partnerPerms = perms,
-                                        onEditEntry = { entry, end -> 
-                                            editingEntry = entry
-                                            editingEndDate = end
-                                        },
-                                        onDeleteEntry = if (state.isPartner) {{ /* read-only */ }} else {{ cycleTracker.deleteEntry(it) }}
-                                    )
-                                }
-                            }
-                            is Screen.Hub -> {
-                                val perms = rustBridge.getPartnerPermissions()
-                                val hasHubPerms = perms.shareBirthControl || perms.sharePregnancyTests
-                                if (state.isPartner && !hasHubPerms) {
-                                    LaunchedEffect(Unit) { onScreenChange(Screen.Home) }
-                                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Access revoked by partner") }
-                                } else {
-                                    HealthHubScreen(
-                                        currentMethod = birthControl?.type,
-                                        onMethodSelected = if (state.isPartner) { {} } else { { type ->
-                                            cycleQueries.setBirthControl(type)
-                                            cycleQueries.selectAllReminders().executeAsList()
-                                                .filter { it.type != "Pregnancy Test" }
-                                                .forEach { cycleQueries.deleteReminder(it.id) }
-                                        } },
-                                        isPartner = state.isPartner,
-                                        partnerPerms = perms,
-                                        queries = cycleQueries,
-                                        notificationScheduler = notificationScheduler
-                                    )
-                                }
-                            }
-                            is Screen.PartnerPermissions -> if (state.isPartner) { LaunchedEffect(Unit) { onScreenChange(Screen.Home) } } else PartnerPermissionsScreen(
-                                rustBridge = rustBridge,
-                                isBiometricsEnabled = storage.isBiometricsEnabled(),
-                                onToggleBiometrics = { enabled ->
-                                    storage.setBiometricsEnabled(enabled)
-                                },
-                                onBack = onBack,
-                                onSave = { perms ->
-                                    rustBridge.savePartnerPermissions(perms)
-                                    storage.savePartnerPermissionsJson(com.novarytm.utils.AppJson.encodeToString(perms))
-                                    syncManager?.scope?.launch {
-                                        syncManager?.prepareAndUploadPayload()
+                                        CalendarScreen(
+                                            cycleTracker = cycleTracker, 
+                                            entries = latestEntries,
+                                            isPartner = state.isPartner,
+                                            partnerPerms = perms,
+                                            onEditEntry = { entry, end -> 
+                                                editingEntry = entry
+                                                editingEndDate = end
+                                            },
+                                            onDeleteEntry = if (state.isPartner) {{ /* read-only */ }} else {{ cycleTracker.deleteEntry(it) }}
+                                        )
                                     }
                                 }
-                            )
-                            is Screen.PartnerSettings -> if (!state.isPartner) { LaunchedEffect(Unit) { onScreenChange(Screen.Home) } } else PartnerSettingsScreen(
-                                onBack = onBack,
-                                onDisconnect = {
-                                    storage.saveTargetSyncId("")
-                                    cycleQueries.deleteAllEntries()
-                                    cycleQueries.deleteAllPregnancyTests()
-                                    cycleQueries.deleteAllReminders()
-                                    cycleQueries.deleteBirthControl()
-                                    sessionManager.lock()
+                                is Screen.Hub -> {
+                                    val perms = rustBridge.getPartnerPermissions()
+                                    val hasHubPerms = perms.shareBirthControl || perms.sharePregnancyTests
+                                    if (state.isPartner && !hasHubPerms) {
+                                        LaunchedEffect(Unit) { onScreenChange(Screen.Home) }
+                                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Access revoked by partner") }
+                                    } else {
+                                        HealthHubScreen(
+                                            currentMethod = birthControl?.type,
+                                            onMethodSelected = if (state.isPartner) { {} } else { { type ->
+                                                cycleQueries.setBirthControl(type)
+                                                cycleQueries.selectAllReminders().executeAsList()
+                                                    .filter { it.type != "Pregnancy Test" }
+                                                    .forEach { cycleQueries.deleteReminder(it.id) }
+                                            } },
+                                            isPartner = state.isPartner,
+                                            partnerPerms = perms,
+                                            queries = cycleQueries,
+                                            notificationScheduler = notificationScheduler
+                                        )
+                                    }
                                 }
-                            )
-                            is Screen.ShareSyncCode -> if (state.isPartner) { LaunchedEffect(Unit) { onScreenChange(Screen.Home) } } else ShareSyncCodeScreen(
-                                ownerId = userId,
-                                storage = storage,
-                                rustBridge = rustBridge,
-                                syncManager = syncManager,
-                                googleAuthManager = googleAuthManager,
-                                birthControl = birthControl,
-                                entries = latestEntries,
-                                onBack = onBack,
-                                onOpenPermissions = { onScreenChange(Screen.PartnerPermissions) }
-                            )
+                                is Screen.PartnerPermissions -> if (state.isPartner) { LaunchedEffect(Unit) { onScreenChange(Screen.Home) } } else PartnerPermissionsScreen(
+                                    rustBridge = rustBridge,
+                                    isBiometricsEnabled = storage.isBiometricsEnabled(),
+                                    onToggleBiometrics = { enabled ->
+                                        storage.setBiometricsEnabled(enabled)
+                                    },
+                                    onBack = onBack,
+                                    onSave = { perms ->
+                                        rustBridge.savePartnerPermissions(perms)
+                                        storage.savePartnerPermissionsJson(com.novarytm.utils.AppJson.encodeToString(perms))
+                                        syncManager?.scope?.launch {
+                                            syncManager?.prepareAndUploadPayload()
+                                        }
+                                    }
+                                )
+                                is Screen.PartnerSettings -> if (!state.isPartner) { LaunchedEffect(Unit) { onScreenChange(Screen.Home) } } else PartnerSettingsScreen(
+                                    onBack = onBack,
+                                    onDisconnect = {
+                                        storage.saveTargetSyncId("")
+                                        cycleQueries.deleteAllEntries()
+                                        cycleQueries.deleteAllPregnancyTests()
+                                        cycleQueries.deleteAllReminders()
+                                        cycleQueries.deleteBirthControl()
+                                        sessionManager.lock()
+                                    }
+                                )
+                                is Screen.ShareSyncCode -> if (state.isPartner) { LaunchedEffect(Unit) { onScreenChange(Screen.Home) } } else ShareSyncCodeScreen(
+                                    ownerId = userId,
+                                    storage = storage,
+                                    rustBridge = rustBridge,
+                                    syncManager = syncManager,
+                                    googleAuthManager = googleAuthManager,
+                                    birthControl = birthControl,
+                                    entries = latestEntries,
+                                    onBack = onBack,
+                                    onOpenPermissions = { onScreenChange(Screen.PartnerPermissions) }
+                                )
+                            }
                         }
-                        } // Box
                     } // Column
                 }
             }
