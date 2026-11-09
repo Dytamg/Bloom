@@ -222,10 +222,10 @@
     "semantic_hash": "a191454b9b23d2633d2c84119f6f50af"
   },
   "shared/src/commonMain/kotlin/com/novarytm/ui/CalendarScreen.kt": {
-    "mtime": 1793114308.9652505,
-    "seen": 1793800813.2904882,
-    "ast_hash": "dbbaf7d523bfe72d64ba9fcd3f65b167",
-    "semantic_hash": "dbbaf7d523bfe72d64ba9fcd3f65b167"
+    "mtime": 1794241722.853547,
+    "seen": 1794241939.1274664,
+    "ast_hash": "f32c1d667f18869ad1fa834639bc382c",
+    "semantic_hash": ""
   },
   "shared/src/commonMain/kotlin/com/novarytm/ui/ConnectPartnerScreen.kt": {
     "mtime": 1792598709.7254915,
@@ -240,10 +240,10 @@
     "semantic_hash": "5e8cc95e5c785d0f34b4f06ac9b7aa54"
   },
   "shared/src/commonMain/kotlin/com/novarytm/ui/CyclePhaseVisualizer.kt": {
-    "mtime": 1793114289.0359273,
-    "seen": 1793800813.2904916,
-    "ast_hash": "d685daafd35cf43b6ca9d0a76eab372b",
-    "semantic_hash": "d685daafd35cf43b6ca9d0a76eab372b"
+    "mtime": 1794240641.4111078,
+    "seen": 1794241226.0732224,
+    "ast_hash": "7b50186a189e3aa452fe5e1118dd069a",
+    "semantic_hash": ""
   },
   "shared/src/commonMain/kotlin/com/novarytm/ui/HealthHubScreen.kt": {
     "mtime": 1792596987.5962846,
@@ -264,10 +264,10 @@
     "semantic_hash": "40f1cb41346f22c2603012032113bab0"
   },
   "shared/src/commonMain/kotlin/com/novarytm/ui/LogEntryScreen.kt": {
-    "mtime": 1792596765.0558732,
-    "seen": 1793800813.290497,
-    "ast_hash": "628718f0e86d3542e71bfc4931d5e0b7",
-    "semantic_hash": "628718f0e86d3542e71bfc4931d5e0b7"
+    "mtime": 1794240404.584453,
+    "seen": 1794241226.073232,
+    "ast_hash": "a556993735523fafe0c0c6c316f52062",
+    "semantic_hash": ""
   },
   "shared/src/commonMain/kotlin/com/novarytm/ui/LoginScreen.kt": {
     "mtime": 1782691420.3246417,
@@ -276,10 +276,10 @@
     "semantic_hash": "125f8d68c939b2ebd2c646ee518b058e"
   },
   "shared/src/commonMain/kotlin/com/novarytm/ui/MainDashboard.kt": {
-    "mtime": 1792597392.1527202,
-    "seen": 1793800813.2904992,
-    "ast_hash": "4d2faf1ffa7b06d11b063d118cd4c49e",
-    "semantic_hash": "4d2faf1ffa7b06d11b063d118cd4c49e"
+    "mtime": 1794240588.3382838,
+    "seen": 1794241226.0732362,
+    "ast_hash": "2ff68137c6da533eca560721e2720239",
+    "semantic_hash": ""
   },
   "shared/src/commonMain/kotlin/com/novarytm/ui/PartnerPermissionsScreen.kt": {
     "mtime": 1782136552.5644405,
@@ -438,28 +438,28 @@
     "semantic_hash": "fad41a12720eaeb8862a4460997ba7e0"
   },
   "androidApp/src/main/res/drawable/bloom_logo.png": {
-    "mtime": 1783139795.861278,
-    "seen": 1793800813.29053,
-    "ast_hash": "21c1a7581d9e5ff66cf68b1af45d8b98",
-    "semantic_hash": "21c1a7581d9e5ff66cf68b1af45d8b98"
+    "mtime": 1794242251.0548594,
+    "seen": 1794242440.7572398,
+    "ast_hash": "493a480a018a223e7bac6eb8a72437bc",
+    "semantic_hash": ""
   },
   "androidApp/src/main/res/mipmap-xxxhdpi/ic_launcher.png": {
-    "mtime": 1783139795.8633075,
-    "seen": 1793800813.2905314,
-    "ast_hash": "21c1a7581d9e5ff66cf68b1af45d8b98",
-    "semantic_hash": "21c1a7581d9e5ff66cf68b1af45d8b98"
+    "mtime": 1794242251.5648468,
+    "seen": 1794242440.7572532,
+    "ast_hash": "1c9713d64057e673117d6b3ed210eec0",
+    "semantic_hash": ""
   },
   "androidApp/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png": {
-    "mtime": 1783139795.865867,
-    "seen": 1793800813.2905324,
-    "ast_hash": "21c1a7581d9e5ff66cf68b1af45d8b98",
-    "semantic_hash": "21c1a7581d9e5ff66cf68b1af45d8b98"
+    "mtime": 1794242251.6248453,
+    "seen": 1794242440.7572544,
+    "ast_hash": "ed491c48c605694be3a675484869b470",
+    "semantic_hash": ""
   },
   "shared/src/commonMain/composeResources/drawable/app_logo.png": {
-    "mtime": 1783139795.8588707,
-    "seen": 1793800813.2905335,
-    "ast_hash": "21c1a7581d9e5ff66cf68b1af45d8b98",
-    "semantic_hash": "21c1a7581d9e5ff66cf68b1af45d8b98"
+    "mtime": 1794242251.0608594,
+    "seen": 1794242440.757256,
+    "ast_hash": "493a480a018a223e7bac6eb8a72437bc",
+    "semantic_hash": ""
   },
   "scripts/query_graph.sh": {
     "mtime": 1794156052.9351256,
@@ -471,6 +471,60 @@
     "mtime": 1794235313.646004,
     "seen": 1794235328.48567,
     "ast_hash": "fcc6f9109f52d38a2229a07935892b0c",
+    "semantic_hash": ""
+  },
+  "scripts/generate_brand_assets.py": {
+    "mtime": 1794242228.9034102,
+    "seen": 1794242440.7571468,
+    "ast_hash": "d2aab2fabddbd3113351dfc3150a3d9d",
+    "semantic_hash": ""
+  },
+  "androidApp/src/main/res/mipmap-hdpi/ic_launcher.png": {
+    "mtime": 1794242251.2228553,
+    "seen": 1794242440.7572412,
+    "ast_hash": "13d38cca1bc73faab60a2fb767298821",
+    "semantic_hash": ""
+  },
+  "androidApp/src/main/res/mipmap-hdpi/ic_launcher_round.png": {
+    "mtime": 1794242251.276282,
+    "seen": 1794242440.7572432,
+    "ast_hash": "60640a6202562ea218b6e750c2dadb99",
+    "semantic_hash": ""
+  },
+  "androidApp/src/main/res/mipmap-mdpi/ic_launcher.png": {
+    "mtime": 1794242251.114858,
+    "seen": 1794242440.7572443,
+    "ast_hash": "9e6b8f89dc3849f1fe0757f7d0cee4fc",
+    "semantic_hash": ""
+  },
+  "androidApp/src/main/res/mipmap-mdpi/ic_launcher_round.png": {
+    "mtime": 1794242251.1691422,
+    "seen": 1794242440.7572458,
+    "ast_hash": "af1969912a59d5947337e9de07fa6a62",
+    "semantic_hash": ""
+  },
+  "androidApp/src/main/res/mipmap-xhdpi/ic_launcher.png": {
+    "mtime": 1794242251.3298526,
+    "seen": 1794242440.7572467,
+    "ast_hash": "053a7442c81f1e08e07849187931c6c8",
+    "semantic_hash": ""
+  },
+  "androidApp/src/main/res/mipmap-xhdpi/ic_launcher_round.png": {
+    "mtime": 1794242251.3888512,
+    "seen": 1794242440.757248,
+    "ast_hash": "459cd068eb1639b116b105cdc6903758",
+    "semantic_hash": ""
+  },
+  "androidApp/src/main/res/mipmap-xxhdpi/ic_launcher.png": {
+    "mtime": 1794242251.4478498,
+    "seen": 1794242440.7572503,
+    "ast_hash": "461243c2931aa01c2f928ab0fb8b00b2",
+    "semantic_hash": ""
+  },
+  "androidApp/src/main/res/mipmap-xxhdpi/ic_launcher_round.png": {
+    "mtime": 1794242251.5048482,
+    "seen": 1794242440.7572515,
+    "ast_hash": "8a68223ef71c20a3da459ff783aac69e",
     "semantic_hash": ""
   }
 }
