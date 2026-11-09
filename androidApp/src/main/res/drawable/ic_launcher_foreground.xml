@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Eggshell Chalice Motif (#E04686) -->
+    <path
+        android:strokeColor="#E04686"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M 35,62 C 35,72.5 44,79.5 54,79.5 C 64,79.5 73,72.5 73,62 M 35,62 L 41,66 L 47,62.5 L 54,67.5 L 61,62.5 L 67,66 L 73,62 M 47,79.5 C 49,81.5 51,82 54,82 C 57,82 59,81.5 61,79.5 M 54,67.5 L 52.5,71.5 L 55,75" />
+    <!-- Sprouting Lily/Lotus Blossom & Foliage Motif (#33C2E8) -->
+    <path
+        android:strokeColor="#33C2E8"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M 54,67.5 L 54,53 M 54,53 C 48,45 46.5,35 54,27 C 61.5,35 60,45 54,53 M 54,29 L 54,48 M 54,51 C 47.5,47 40,41.5 39,32 C 45,34 49.5,39.5 52,44.5 M 54,51 C 60.5,47 68,41.5 69,32 C 63,34 58.5,39.5 56,44.5 M 54,53 C 43.5,51 34,46.5 29,39 C 35,43 43,46.5 51,49 M 54,53 C 64.5,51 74,46.5 79,39 C 73,43 65,46.5 57,49 M 54,61 C 44.5,61 35,57 28,50.5 C 35,54.5 44.5,57 54,57 M 54,61 C 63.5,61 73,57 80,50.5 C 73,54.5 63.5,57 54,57" />
+</vector>
