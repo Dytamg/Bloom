@@ -1,0 +1,2 @@
+ALTER TABLE CycleEntry ADD COLUMN painLevel INTEGER AS kotlin.Int;
+ALTER TABLE CycleEntry ADD COLUMN symptoms TEXT;

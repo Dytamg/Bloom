@@ -87,27 +87,20 @@ sealed class OnboardingStage {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun App(database: NovarytmDatabase, driver: SqlDriver, rustBridge: RustBridge, storage: SecureStorageManager, notificationScheduler: com.novarytm.notifications.NotificationScheduler) {
+fun App(
+    database: NovarytmDatabase,
+    driver: SqlDriver,
+    rustBridge: RustBridge,
+    storage: SecureStorageManager,
+    notificationScheduler: com.novarytm.notifications.NotificationScheduler,
+    backgroundSyncScheduler: com.novarytm.sync.BackgroundSyncScheduler? = null
+) {
     var isInitializing by remember { mutableStateOf(true) }
     var criticalError by remember { mutableStateOf<String?>(null) }
     
     val sessionManager = remember { SessionManager(driver, rustBridge, storage) }
     val sessionState by sessionManager.state.collectAsState()
-    
-    // SECURITY: Auto-Lock on Background
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) {
-                sessionManager.lock()
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-        }
-    }
-    
+
     val httpClient = remember {
         HttpClient {
             install(ContentNegotiation) {
@@ -124,8 +117,38 @@ fun App(database: NovarytmDatabase, driver: SqlDriver, rustBridge: RustBridge, s
 
     val googleAuthManager = rememberGoogleAuthManager(storage)
     val googleDriveManager = remember(googleAuthManager) { GoogleDriveManager(googleAuthManager, httpClient) }
-    val syncManager = remember(database, rustBridge, storage, googleDriveManager, cycleTracker, isInitializing) { 
-        if (isInitializing) null else SyncManager(database, rustBridge, storage, googleDriveManager, cycleTracker = cycleTracker) 
+    val syncManager = remember(database, rustBridge, storage, googleDriveManager, cycleTracker, backgroundSyncScheduler, isInitializing) { 
+        if (isInitializing) null else SyncManager(
+            database = database,
+            rustBridge = rustBridge,
+            storage = storage,
+            googleDriveManager = googleDriveManager,
+            cycleTracker = cycleTracker,
+            backgroundSyncScheduler = backgroundSyncScheduler
+        ) 
+    }
+
+    // SECURITY: Flush pending outbound changes & Auto-Lock on Background
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val currentSyncManager by rememberUpdatedState(syncManager)
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                val currentState = sessionManager.state.value
+                if (!storage.isAuthFlowActive() && currentState is SessionState.Unlocked && !currentState.isPartner) {
+                    currentSyncManager?.let { manager ->
+                        manager.scope.launch {
+                            manager.flushPendingChanges()
+                        }
+                    }
+                }
+                sessionManager.lock()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
     
     var onboardingStage by remember { mutableStateOf<OnboardingStage>(OnboardingStage.Welcome) }
@@ -205,9 +228,12 @@ fun App(database: NovarytmDatabase, driver: SqlDriver, rustBridge: RustBridge, s
 
     DisposableEffect(Unit) {
         onDispose {
-            syncManager?.scope?.launch {
-                if (sessionState is SessionState.Unlocked && !(sessionState as SessionState.Unlocked).isPartner) {
-                    syncManager?.prepareAndUploadPayload()
+            val currentState = sessionManager.state.value
+            if (currentState is SessionState.Unlocked && !currentState.isPartner) {
+                currentSyncManager?.let { manager ->
+                    manager.scope.launch {
+                        manager.flushPendingChanges()
+                    }
                 }
             }
             sessionManager.lock()
@@ -281,6 +307,7 @@ fun App(database: NovarytmDatabase, driver: SqlDriver, rustBridge: RustBridge, s
                     rustBridge = rustBridge,
                     notificationScheduler = notificationScheduler,
                     googleAuthManager = googleAuthManager,
+                    backgroundSyncScheduler = backgroundSyncScheduler,
                     onTriggerStepUpAuth = { triggerStepUpAuth++ },
                     stepUpFallbackTrigger = stepUpFallbackTrigger,
                     currentThemeName = currentThemeName,
@@ -330,6 +357,7 @@ fun AppContent(
     rustBridge: RustBridge,
     notificationScheduler: com.novarytm.notifications.NotificationScheduler,
     googleAuthManager: GoogleAuthManager,
+    backgroundSyncScheduler: com.novarytm.sync.SyncUploadScheduler? = null,
     onTriggerStepUpAuth: () -> Unit,
     stepUpFallbackTrigger: Int = 0,
     currentThemeName: String,
@@ -427,6 +455,17 @@ fun AppContent(
             )
         }
         is SessionState.Unlocked -> {
+            var permsVersion by remember { mutableStateOf(0) }
+            LaunchedEffect(cycleQueries) {
+                cycleQueries.selectAllEntries().asFlow().collect {
+                    kotlinx.coroutines.yield()
+                    permsVersion++
+                }
+            }
+            val partnerPerms = remember(currentScreen, latestEntries, permsVersion) {
+                rustBridge.getPartnerPermissions()
+            }
+
             // Auto-Refresh on Unlock (for all accounts and partners)
             LaunchedEffect(Unit) {
                 try {
@@ -438,9 +477,10 @@ fun AppContent(
                             syncManager?.manualRefresh()
                         }
                         cycleTracker.refreshCycleState()
+                        permsVersion++
                     }
                 } catch (e: Exception) {
-
+                    println("BloomSync: Startup partner refresh failed: ${e::class.simpleName}: ${e.message}")
                 }
             }
             
@@ -559,8 +599,7 @@ fun AppContent(
                                 )
                             } else {
                                 // Partner: show tabs based on owner-granted permissions
-                                val partnerPerms = remember(currentScreen, latestEntries) { rustBridge.getPartnerPermissions() }
-                                if (partnerPerms.shareCyclePhase) {
+                                if (partnerPerms.shareCyclePhase || partnerPerms.shareFlowIntensity || partnerPerms.shareSymptomsMoods || partnerPerms.shareSexualActivity) {
                                     NavigationBarItem(
                                         icon = { Icon(Icons.Default.CalendarMonth, contentDescription = null) },
                                         label = { Text("Calendar", style = MaterialTheme.typography.labelSmall) },
@@ -583,7 +622,6 @@ fun AppContent(
                     }
                 ) { padding ->
                     // Auto-redirect partner to Home if they are on the Hub but both permissions are revoked
-                    val partnerPerms = remember(currentScreen, latestEntries) { rustBridge.getPartnerPermissions() }
                     LaunchedEffect(state.isPartner, currentScreen, partnerPerms.shareBirthControl, partnerPerms.sharePregnancyTests) {
                         if (state.isPartner && currentScreen is Screen.Hub) {
                             if (!partnerPerms.shareBirthControl && !partnerPerms.sharePregnancyTests) {
@@ -592,35 +630,162 @@ fun AppContent(
                         }
                     }
                     
+                    val syncWarning by (syncManager?.syncWarning ?: kotlinx.coroutines.flow.MutableStateFlow(null)).collectAsState()
+                    val syncAuthRequired by (syncManager?.syncAuthRequired ?: kotlinx.coroutines.flow.MutableStateFlow(false)).collectAsState()
                     val syncStatusMsg = syncManager?.syncStatusMessage?.collectAsState()?.value
+                    val activeWarning = syncWarning ?: syncStatusMsg
+                    val bannerScope = rememberCoroutineScope()
+                    var isSyncBannerBusy by remember { mutableStateOf(false) }
 
                     Column(modifier = Modifier.padding(padding).fillMaxSize()) {
-                        // Drive storage warning banner
-                        if (syncStatusMsg != null) {
-                            Row(
+                        // Unified Drive sync warning banner
+                        if (activeWarning != null) {
+                            val isClockSkewOrRollback = activeWarning.contains("force resync", ignoreCase = true) ||
+                                activeWarning.contains("clock", ignoreCase = true) ||
+                                activeWarning.contains("older than last sync", ignoreCase = true)
+
+                            Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(Color(0xFFFFF3CD))
-                                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF3CD)),
+                                border = BorderStroke(1.dp, Color(0xFFFFEEBA))
                             ) {
-                                Icon(
-                                    Icons.Default.Warning,
-                                    contentDescription = null,
-                                    tint = Color(0xFF856404),
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Text(
-                                    text = syncStatusMsg,
-                                    color = Color(0xFF856404),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
-                                )
-                                IconButton(
-                                    onClick = { syncManager?.clearSyncStatus() },
-                                    modifier = Modifier.size(48.dp)
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp)
                                 ) {
-                                    Icon(Icons.Default.Close, contentDescription = "Dismiss", tint = Color(0xFF856404), modifier = Modifier.size(16.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Warning,
+                                            contentDescription = "Sync Warning",
+                                            tint = Color(0xFF856404),
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Text(
+                                            text = activeWarning,
+                                            color = Color(0xFF856404),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Medium,
+                                            modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                                        )
+                                        IconButton(
+                                            onClick = { syncManager?.clearSyncStatus() },
+                                            modifier = Modifier.size(36.dp)
+                                        ) {
+                                            Icon(Icons.Default.Close, contentDescription = "Dismiss", tint = Color(0xFF856404), modifier = Modifier.size(16.dp))
+                                        }
+                                    }
+                                    if (syncManager != null) {
+                                        Spacer(Modifier.height(8.dp))
+                                        Row(
+                                            horizontalArrangement = Arrangement.End,
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            when {
+                                                syncAuthRequired -> {
+                                                    Button(
+                                                        enabled = !isSyncBannerBusy,
+                                                        onClick = {
+                                                            isSyncBannerBusy = true
+                                                            bannerScope.launch {
+                                                                try {
+                                                                    val signedIn = googleAuthManager.signIn()
+                                                                    if (signedIn) {
+                                                                        withContext(Dispatchers.IO) {
+                                                                            if (state.isPartner) {
+                                                                                syncManager.manualRefresh()
+                                                                            } else {
+                                                                                syncManager.prepareAndUploadPayload() ?: syncManager.manualRefresh()
+                                                                            }
+                                                                        }
+                                                                        cycleTracker.refreshCycleState()
+                                                                        permsVersion++
+                                                                    }
+                                                                } finally {
+                                                                    isSyncBannerBusy = false
+                                                                }
+                                                            }
+                                                        },
+                                                        colors = ButtonDefaults.buttonColors(
+                                                            containerColor = Color(0xFF856404),
+                                                            contentColor = Color.White
+                                                        ),
+                                                        shape = RoundedCornerShape(8.dp),
+                                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                                        modifier = Modifier.height(36.dp)
+                                                    ) {
+                                                        Text("Reconnect Google Drive", style = MaterialTheme.typography.labelMedium)
+                                                    }
+                                                }
+                                                isClockSkewOrRollback -> {
+                                                    Button(
+                                                        enabled = !isSyncBannerBusy,
+                                                        onClick = {
+                                                            isSyncBannerBusy = true
+                                                            bannerScope.launch {
+                                                                try {
+                                                                    withContext(Dispatchers.IO) {
+                                                                        syncManager.forceResync()
+                                                                    }
+                                                                    cycleTracker.refreshCycleState()
+                                                                    permsVersion++
+                                                                } finally {
+                                                                    isSyncBannerBusy = false
+                                                                }
+                                                            }
+                                                        },
+                                                        colors = ButtonDefaults.buttonColors(
+                                                            containerColor = Color(0xFF856404),
+                                                            contentColor = Color.White
+                                                        ),
+                                                        shape = RoundedCornerShape(8.dp),
+                                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                                        modifier = Modifier.height(36.dp)
+                                                    ) {
+                                                        Text("Force Resync", style = MaterialTheme.typography.labelMedium)
+                                                    }
+                                                }
+                                                else -> {
+                                                    Button(
+                                                        enabled = !isSyncBannerBusy,
+                                                        onClick = {
+                                                            isSyncBannerBusy = true
+                                                            bannerScope.launch {
+                                                                try {
+                                                                    withContext(Dispatchers.IO) {
+                                                                        if (state.isPartner) {
+                                                                            syncManager.manualRefresh()
+                                                                        } else {
+                                                                            syncManager.prepareAndUploadPayload() ?: syncManager.manualRefresh()
+                                                                        }
+                                                                    }
+                                                                    cycleTracker.refreshCycleState()
+                                                                    permsVersion++
+                                                                } finally {
+                                                                    isSyncBannerBusy = false
+                                                                }
+                                                            }
+                                                        },
+                                                        colors = ButtonDefaults.buttonColors(
+                                                            containerColor = Color(0xFF856404),
+                                                            contentColor = Color.White
+                                                        ),
+                                                        shape = RoundedCornerShape(8.dp),
+                                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                                                        modifier = Modifier.height(36.dp)
+                                                    ) {
+                                                        Text("Retry", style = MaterialTheme.typography.labelMedium)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -665,13 +830,16 @@ fun AppContent(
                                     userId = userId,
                                     isPartnerView = state.isPartner,
                                     syncManager = syncManager,
+                                    googleAuthManager = googleAuthManager,
+                                    partnerPerms = partnerPerms,
+                                    onSyncComplete = { permsVersion++ },
                                     queries = cycleQueries,
                                     onLogClick = { onShowLogScreenChange(true) },
                                     onSettingsClick = { 
                                         if (state.isPartner) {
                                             onScreenChange(Screen.PartnerSettings)
                                         } else {
-                                            onScreenChange(Screen.PartnerPermissions)
+                                            onTriggerStepUpAuth()
                                         }
                                     },
                                     onPairClick = { onScreenChange(Screen.ShareSyncCode) },
@@ -679,8 +847,7 @@ fun AppContent(
                                     onThemeChange = onThemeChange
                                 )
                                 is Screen.Calendar -> {
-                                    val perms = rustBridge.getPartnerPermissions()
-                                    val hasCalPerms = perms.shareCyclePhase || perms.shareFlowIntensity || perms.shareSymptomsMoods || perms.shareSexualActivity
+                                    val hasCalPerms = partnerPerms.shareCyclePhase || partnerPerms.shareFlowIntensity || partnerPerms.shareSymptomsMoods || partnerPerms.shareSexualActivity
                                     if (state.isPartner && !hasCalPerms) {
                                         LaunchedEffect(Unit) { onScreenChange(Screen.Home) }
                                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Access revoked by partner") }
@@ -689,7 +856,7 @@ fun AppContent(
                                             cycleTracker = cycleTracker, 
                                             entries = latestEntries,
                                             isPartner = state.isPartner,
-                                            partnerPerms = perms,
+                                            partnerPerms = partnerPerms,
                                             onEditEntry = { entry, end -> 
                                                 editingEntry = entry
                                                 editingEndDate = end
@@ -699,22 +866,25 @@ fun AppContent(
                                     }
                                 }
                                 is Screen.Hub -> {
-                                    val perms = rustBridge.getPartnerPermissions()
-                                    val hasHubPerms = perms.shareBirthControl || perms.sharePregnancyTests
+                                    val hasHubPerms = partnerPerms.shareBirthControl || partnerPerms.sharePregnancyTests
                                     if (state.isPartner && !hasHubPerms) {
                                         LaunchedEffect(Unit) { onScreenChange(Screen.Home) }
                                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Access revoked by partner") }
                                     } else {
                                         HealthHubScreen(
-                                            currentMethod = birthControl?.type,
+                                            currentMethod = birthControl?.takeIf { it.isActive != false && !it.type.equals("None", ignoreCase = true) }?.type,
                                             onMethodSelected = if (state.isPartner) { {} } else { { type ->
-                                                cycleQueries.setBirthControl(type)
+                                                if (type.equals("None", ignoreCase = true)) {
+                                                    cycleQueries.setBirthControlWithReminder("None", null, false)
+                                                } else {
+                                                    cycleQueries.setBirthControl(type, true)
+                                                }
                                                 cycleQueries.selectAllReminders().executeAsList()
                                                     .filter { it.type != "Pregnancy Test" }
                                                     .forEach { cycleQueries.deleteReminder(it.id) }
                                             } },
                                             isPartner = state.isPartner,
-                                            partnerPerms = perms,
+                                            partnerPerms = partnerPerms,
                                             queries = cycleQueries,
                                             notificationScheduler = notificationScheduler
                                         )
@@ -730,20 +900,22 @@ fun AppContent(
                                     onSave = { perms ->
                                         rustBridge.savePartnerPermissions(perms)
                                         storage.savePartnerPermissionsJson(com.novarytm.utils.AppJson.encodeToString(perms))
+                                        permsVersion++
                                         syncManager?.scope?.launch {
                                             syncManager?.prepareAndUploadPayload()
                                         }
                                     }
                                 )
                                 is Screen.PartnerSettings -> if (!state.isPartner) { LaunchedEffect(Unit) { onScreenChange(Screen.Home) } } else PartnerSettingsScreen(
+                                    partnerPerms = partnerPerms,
                                     onBack = onBack,
                                     onDisconnect = {
-                                        storage.saveTargetSyncId("")
+                                        backgroundSyncScheduler?.cancelPartnerPull()
                                         cycleQueries.deleteAllEntries()
                                         cycleQueries.deleteAllPregnancyTests()
                                         cycleQueries.deleteAllReminders()
                                         cycleQueries.deleteBirthControl()
-                                        sessionManager.lock()
+                                        sessionManager.reset()
                                     }
                                 )
                                 is Screen.ShareSyncCode -> if (state.isPartner) { LaunchedEffect(Unit) { onScreenChange(Screen.Home) } } else ShareSyncCodeScreen(
@@ -755,7 +927,7 @@ fun AppContent(
                                     birthControl = birthControl,
                                     entries = latestEntries,
                                     onBack = onBack,
-                                    onOpenPermissions = { onScreenChange(Screen.PartnerPermissions) }
+                                    onOpenPermissions = { onTriggerStepUpAuth() }
                                 )
                             }
                         }

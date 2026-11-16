@@ -33,4 +33,10 @@ expect class SecureStorageManager {
     fun clearLockoutState()
     fun saveLastSyncTimestamp(timestampMs: Long)
     fun getLastSyncTimestamp(): Long
+    fun savePrimarySyncFileId(fileId: String?)
+    fun getPrimarySyncFileId(): String?
+    fun saveLastSuccessfulSyncWallclock(timestampMs: Long)
+    fun getLastSuccessfulSyncWallclock(): Long
+    fun setPendingSyncUpload(pending: Boolean)
+    fun hasPendingSyncUpload(): Boolean
 }

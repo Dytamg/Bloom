@@ -6,6 +6,6 @@ import com.novarytm.storage.SecureStorageManager
 
 actual class DriverFactory {
     actual fun createDriver(storage: SecureStorageManager): SqlDriver {
-        return NativeSqliteDriver(NovarytmDatabase.Schema, "novarytm.db")
+        return NativeSqliteDriver(SafeMigrationSchema, "novarytm.db")
     }
 }

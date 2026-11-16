@@ -26,42 +26,138 @@ lazy_static! {
     static ref PARTNER_PERMISSIONS: Mutex<PartnerPermissions> = Mutex::new(PartnerPermissions::default());
 }
 
-#[derive(Serialize, Deserialize, Default, Clone)]
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
 pub struct PartnerPermissions {
+    #[serde(rename = "share_cycle_phase", alias = "shareCyclePhase", default)]
     pub share_cycle_phase: bool,
+    #[serde(rename = "share_flow_intensity", alias = "shareFlowIntensity", default)]
     pub share_flow_intensity: bool,
+    #[serde(rename = "share_symptoms_moods", alias = "shareSymptomsMoods", default)]
     pub share_symptoms_moods: bool,
+    #[serde(rename = "share_birth_control", alias = "shareBirthControl", default)]
     pub share_birth_control: bool,
-    #[serde(default)]
+    #[serde(rename = "share_pregnancy_tests", alias = "sharePregnancyTests", default)]
     pub share_pregnancy_tests: bool,
-    #[serde(default)]
+    #[serde(rename = "share_sexual_activity", alias = "shareSexualActivity", default)]
     pub share_sexual_activity: bool,
 }
 
-#[derive(Serialize, Deserialize)]
+impl PartnerPermissions {
+    pub fn to_bitmask(&self) -> i32 {
+        let mut mask = 0i32;
+        if self.share_cycle_phase {
+            mask |= 0x01;
+        }
+        if self.share_flow_intensity {
+            mask |= 0x02;
+        }
+        if self.share_symptoms_moods {
+            mask |= 0x04;
+        }
+        if self.share_sexual_activity {
+            mask |= 0x08;
+        }
+        if self.share_birth_control {
+            mask |= 0x10;
+        }
+        if self.share_pregnancy_tests {
+            mask |= 0x20;
+        }
+        mask
+    }
+
+    pub fn from_bitmask(mask: i32) -> Self {
+        Self {
+            share_cycle_phase: (mask & 0x01) != 0,
+            share_flow_intensity: (mask & 0x02) != 0,
+            share_symptoms_moods: (mask & 0x04) != 0,
+            share_sexual_activity: (mask & 0x08) != 0,
+            share_birth_control: (mask & 0x10) != 0,
+            share_pregnancy_tests: (mask & 0x20) != 0,
+        }
+    }
+}
+
+fn deserialize_permissions<'de, D>(deserializer: D) -> Result<Option<PartnerPermissions>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Deserialize;
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::Number(num) => {
+            Ok(Some(PartnerPermissions::from_bitmask(num.as_i64().unwrap_or(0) as i32)))
+        }
+        serde_json::Value::Object(_) => {
+            let p: PartnerPermissions = serde_json::from_value(value).unwrap_or_default();
+            Ok(Some(p))
+        }
+        _ => Ok(None),
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct SyncEntry {
     pub date: String,
     pub intensity: i32,
     pub notes: Option<String>,
-    #[serde(rename = "sexualRelations", default)]
+    #[serde(rename = "sexualRelations", alias = "sexual_relations", default)]
     pub sexual_relations: Option<String>,
-    #[serde(rename = "painLevel", default)]
+    #[serde(rename = "painLevel", alias = "pain_level", default)]
     pub pain_level: Option<i32>,
     #[serde(default)]
     pub symptoms: Option<String>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct SyncBirthControl {
+    #[serde(rename = "type")]
     pub r#type: String,
+    #[serde(rename = "isActive", alias = "is_active", default = "default_true")]
+    pub is_active: bool,
+    #[serde(rename = "reminderTime", alias = "reminder_time", default, skip_serializing_if = "Option::is_none")]
+    pub reminder_time: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct SyncPregnancyTest {
+    pub date: String,
+    pub result: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct SyncReminder {
+    #[serde(rename = "type")]
+    pub r#type: String,
+    #[serde(default)]
+    pub frequency: String,
+    #[serde(rename = "timeOfDay", alias = "time_of_day", default)]
+    pub time_of_day: Option<String>,
+    #[serde(rename = "nextDate", alias = "next_date", default)]
+    pub next_date: Option<String>,
+    #[serde(rename = "isActive", alias = "is_active", default = "default_true")]
     pub is_active: bool,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct SyncPayload {
+    #[serde(rename = "lastUpdated", alias = "last_updated")]
     pub last_updated: i64,
+    #[serde(rename = "birthControl", alias = "birth_control", default)]
     pub birth_control: Option<SyncBirthControl>,
+    #[serde(default)]
     pub entries: Vec<SyncEntry>,
+    #[serde(rename = "pregnancyTests", alias = "pregnancy_tests", default, skip_serializing_if = "Vec::is_empty")]
+    pub pregnancy_tests: Vec<SyncPregnancyTest>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reminders: Vec<SyncReminder>,
+    #[serde(default, deserialize_with = "deserialize_permissions", skip_serializing_if = "Option::is_none")]
+    pub permissions: Option<PartnerPermissions>,
 }
 
 // VULN-01 FIX: Legacy key derivation — kept only for backward-compatible unlock
@@ -311,56 +407,149 @@ pub fn generate_filtered_payload_internal(
     partner_id: &str,
     shared_key_base64: &str,
 ) -> Vec<u8> {
+    generate_filtered_payload_with_extras_internal(
+        last_updated,
+        birth_control_json,
+        entries_json,
+        None,
+        None,
+        partner_id,
+        shared_key_base64,
+    )
+}
+
+pub fn generate_filtered_payload_with_extras_internal(
+    last_updated: i64,
+    birth_control_json: Option<String>,
+    entries_json: String,
+    pregnancy_tests_json: Option<String>,
+    reminders_json: Option<String>,
+    partner_id: &str,
+    shared_key_base64: &str,
+) -> Vec<u8> {
     let perms = get_partner_permissions_internal();
-    
+
     let birth_control: Option<SyncBirthControl> = if perms.share_birth_control {
         birth_control_json.and_then(|json| serde_json::from_str(&json).ok())
     } else {
         None
     };
 
-    let mut entries: Vec<SyncEntry> = serde_json::from_str(&entries_json).unwrap_or_default();
-    
-    if !perms.share_cycle_phase {
-        entries.clear();
-    } else {
-        for entry in entries.iter_mut() {
-            if !perms.share_flow_intensity {
-                if entry.intensity > 0 {
-                    entry.intensity = 1;
-                } else {
-                    entry.intensity = 0;
-                }
-            }
-            if !perms.share_symptoms_moods {
-                entry.notes = None;
-                entry.symptoms = None;
-                entry.pain_level = None;
-            }
-            if !perms.share_sexual_activity {
-                entry.sexual_relations = None;
-            }
-            if !perms.share_pregnancy_tests {
-                if let Some(ref n) = entry.notes {
+    let raw_entries: Vec<SyncEntry> = serde_json::from_str(&entries_json).unwrap_or_default();
+    let entries: Vec<SyncEntry> = raw_entries
+        .into_iter()
+        .filter_map(|entry| {
+            let redacted_intensity = if !perms.share_cycle_phase {
+                0
+            } else if perms.share_flow_intensity {
+                entry.intensity
+            } else if entry.intensity > 0 {
+                1
+            } else {
+                0
+            };
+
+            let raw_notes = if perms.share_symptoms_moods {
+                entry.notes
+            } else {
+                None
+            };
+            let safe_notes = match raw_notes {
+                Some(n) if !perms.share_pregnancy_tests => {
                     let lower = n.to_lowercase();
-                    if lower.contains("pregnan") || lower.contains("hcg") || lower.contains("positive") || lower.contains("negative") {
-                        entry.notes = None;
+                    if lower.contains("pregnan")
+                        || lower.contains("hcg")
+                        || lower.contains("positive")
+                        || lower.contains("negative")
+                    {
+                        None
+                    } else {
+                        Some(n)
                     }
                 }
-            }
-        }
-    }
+                other => other,
+            };
 
-    let payload = SyncPayload {
-        last_updated: if perms.share_cycle_phase { last_updated } else { 0 },
-        birth_control,
-        entries,
+            let shared_symptoms = if perms.share_symptoms_moods {
+                entry.symptoms
+            } else {
+                None
+            };
+            let shared_pain_level = if perms.share_symptoms_moods {
+                entry.pain_level
+            } else {
+                None
+            };
+            let shared_sexual_relations = if perms.share_sexual_activity {
+                entry.sexual_relations
+            } else {
+                None
+            };
+
+            let has_any_shared_content = redacted_intensity > 0
+                || safe_notes.as_ref().is_some_and(|s| !s.trim().is_empty())
+                || shared_symptoms.as_ref().is_some_and(|s| !s.is_empty())
+                || shared_pain_level.unwrap_or(0) > 0
+                || shared_sexual_relations
+                    .as_ref()
+                    .is_some_and(|s| !s.is_empty());
+
+            if has_any_shared_content {
+                Some(SyncEntry {
+                    date: entry.date,
+                    intensity: redacted_intensity,
+                    notes: safe_notes,
+                    sexual_relations: shared_sexual_relations,
+                    pain_level: shared_pain_level,
+                    symptoms: shared_symptoms,
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    let pregnancy_tests: Vec<SyncPregnancyTest> = if perms.share_pregnancy_tests {
+        pregnancy_tests_json
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
     };
 
-    let raw_json = serde_json::to_string(&payload).unwrap_or_default();
+    let raw_reminders: Vec<SyncReminder> = reminders_json
+        .and_then(|json| serde_json::from_str(&json).ok())
+        .unwrap_or_default();
+    let reminders: Vec<SyncReminder> = raw_reminders
+        .into_iter()
+        .filter(|rm| {
+            let is_pregnancy_test = rm
+                .r#type
+                .replace(' ', "")
+                .eq_ignore_ascii_case("PregnancyTest");
+            if is_pregnancy_test {
+                perms.share_pregnancy_tests
+            } else {
+                perms.share_birth_control
+            }
+        })
+        .collect();
+
+    let payload = SyncPayload {
+        last_updated,
+        birth_control,
+        entries,
+        pregnancy_tests,
+        reminders,
+        permissions: Some(perms),
+    };
+
+    let mut raw_json = serde_json::to_string(&payload).unwrap_or_default();
     use base64::{Engine as _, engine::general_purpose};
     let secret_key = Zeroizing::new(general_purpose::STANDARD.decode(shared_key_base64).unwrap_or_default());
-    encrypt_data(&raw_json, partner_id, &secret_key)
+    let encrypted = encrypt_data(&raw_json, partner_id, &secret_key);
+    raw_json.zeroize();
+    encrypted
 }
 
 pub fn generate_random_key_internal() -> Zeroizing<Vec<u8>> {
@@ -996,7 +1185,9 @@ mod tests {
         let key_b64 = general_purpose::STANDARD.encode(key_bytes);
         let payload = generate_filtered_payload_internal(100, None, entries_json, "partner1", &key_b64);
         let decrypted = decrypt_payload_internal(&payload, "partner1", &key_bytes).unwrap();
-        assert!(!decrypted.contains("pregnancy"));
+        let parsed: SyncPayload = serde_json::from_str(&decrypted).unwrap();
+        assert!(parsed.entries[0].notes.is_none());
+        assert!(!decrypted.contains("Took a pregnancy test"));
         assert!(!decrypted.contains("positive"));
     }
 
@@ -1501,7 +1692,7 @@ mod tests {
         let decrypted: SyncPayload = serde_json::from_str(&decrypt_payload_internal(&payload_enc, partner_id, &key_bytes).unwrap()).unwrap();
         assert!(decrypted.birth_control.is_none(), "Birth control must be None (Redacted)");
 
-        // 7. share_cycle_phase == false: entire entries list emptied, last_updated reset to 0
+        // 7. share_cycle_phase == false with symptoms & sexual activity true: intensity zeroed, permitted fields kept
         save_partner_permissions_internal(PartnerPermissions {
             share_cycle_phase: false,
             share_flow_intensity: true,
@@ -1510,10 +1701,61 @@ mod tests {
             share_pregnancy_tests: true,
             share_sexual_activity: true,
         });
+        let payload_enc = generate_filtered_payload_internal(1000, None, sample_entries.clone(), partner_id, &key_b64);
+        let decrypted: SyncPayload = serde_json::from_str(&decrypt_payload_internal(&payload_enc, partner_id, &key_bytes).unwrap()).unwrap();
+        assert_eq!(decrypted.last_updated, 1000, "Timestamp must be preserved to prevent partner anti-rollback rejection");
+        assert_eq!(decrypted.entries.len(), 2, "Entries with permitted symptoms/sexual activity remain with intensity=0");
+        assert!(decrypted.entries.iter().all(|e| e.intensity == 0));
+
+        // 8. share_cycle_phase == false with symptoms & sexual activity false: entire entries list emptied
+        save_partner_permissions_internal(PartnerPermissions {
+            share_cycle_phase: false,
+            share_flow_intensity: true,
+            share_symptoms_moods: false,
+            share_birth_control: true,
+            share_pregnancy_tests: true,
+            share_sexual_activity: false,
+        });
         let payload_enc = generate_filtered_payload_internal(1000, None, sample_entries, partner_id, &key_b64);
         let decrypted: SyncPayload = serde_json::from_str(&decrypt_payload_internal(&payload_enc, partner_id, &key_bytes).unwrap()).unwrap();
-        assert_eq!(decrypted.last_updated, 0);
-        assert!(decrypted.entries.is_empty(), "Entries must be empty when share_cycle_phase=false");
+        assert_eq!(decrypted.last_updated, 1000);
+        assert!(decrypted.entries.is_empty(), "Entries must be empty when cycle_phase, symptoms_moods, and sexual_activity are false");
+
+        // 9. Reminders normalization + pregnancy_tests + 0-flow omission
+        save_partner_permissions_internal(PartnerPermissions {
+            share_cycle_phase: true,
+            share_flow_intensity: true,
+            share_symptoms_moods: false,
+            share_birth_control: false,
+            share_pregnancy_tests: true,
+            share_sexual_activity: false,
+        });
+        let pt_json = serde_json::json!([
+            { "date": "2025-02-02", "result": "Negative" }
+        ]).to_string();
+        let rem_json = serde_json::json!([
+            { "type": "PregnancyTest", "frequency": "Once", "isActive": true },
+            { "type": "Pregnancy Test", "frequency": "Daily", "isActive": true },
+            { "type": "BirthControl", "frequency": "Daily", "isActive": true }
+        ]).to_string();
+        let zero_flow_entries = serde_json::json!([
+            { "date": "2025-02-01", "intensity": 0, "notes": "secret", "painLevel": 0, "symptoms": "Cramp" },
+            { "date": "2025-02-02", "intensity": 2, "notes": null, "painLevel": null, "symptoms": null }
+        ]).to_string();
+        let payload_enc = generate_filtered_payload_with_extras_internal(
+            2000,
+            None,
+            zero_flow_entries,
+            Some(pt_json),
+            Some(rem_json),
+            partner_id,
+            &key_b64,
+        );
+        let decrypted: SyncPayload = serde_json::from_str(&decrypt_payload_internal(&payload_enc, partner_id, &key_bytes).unwrap()).unwrap();
+        assert_eq!(decrypted.entries.len(), 1, "Empty 0-flow entry after redaction must be omitted");
+        assert_eq!(decrypted.entries[0].date, "2025-02-02");
+        assert_eq!(decrypted.pregnancy_tests.len(), 1);
+        assert_eq!(decrypted.reminders.len(), 2, "Both PregnancyTest and Pregnancy Test reminders must be gated by share_pregnancy_tests");
     }
 
     #[test]
@@ -1678,5 +1920,315 @@ mod tests {
         // Ensure calculation succeeds without panic and detects cycle periods properly
         assert!(!expected_period_days.is_empty());
         assert!(expected_period_days.contains(&"2026-01-01".to_string()));
+    }
+
+    #[test]
+    fn test_sync_payload_kotlin_camel_case_roundtrip() {
+        let kotlin_json = serde_json::json!({
+            "lastUpdated": 1731772800000i64,
+            "birthControl": {
+                "type": "Pill",
+                "isActive": true
+            },
+            "entries": [
+                {
+                    "date": "2026-11-16",
+                    "intensity": 2,
+                    "notes": "Mild cramps",
+                    "sexualRelations": "Protected",
+                    "painLevel": 3,
+                    "symptoms": "Headache"
+                }
+            ],
+            "pregnancyTests": [
+                {
+                    "date": "2026-11-15",
+                    "result": "Negative"
+                }
+            ],
+            "reminders": [
+                {
+                    "type": "Pill",
+                    "frequency": "Daily",
+                    "timeOfDay": "20:00",
+                    "nextDate": "2026-11-17",
+                    "isActive": true
+                }
+            ],
+            "permissions": {
+                "share_cycle_phase": true,
+                "share_flow_intensity": true,
+                "share_symptoms_moods": false,
+                "share_birth_control": true,
+                "share_pregnancy_tests": false,
+                "share_sexual_activity": false
+            }
+        }).to_string();
+
+        let payload: SyncPayload = serde_json::from_str(&kotlin_json).expect("Should deserialize Kotlin camelCase JSON");
+        assert_eq!(payload.last_updated, 1731772800000);
+        assert!(payload.birth_control.is_some());
+        let bc = payload.birth_control.as_ref().unwrap();
+        assert_eq!(bc.r#type, "Pill");
+        assert!(bc.is_active);
+
+        assert_eq!(payload.entries.len(), 1);
+        let entry = &payload.entries[0];
+        assert_eq!(entry.date, "2026-11-16");
+        assert_eq!(entry.intensity, 2);
+        assert_eq!(entry.sexual_relations.as_deref(), Some("Protected"));
+        assert_eq!(entry.pain_level, Some(3));
+        assert_eq!(entry.symptoms.as_deref(), Some("Headache"));
+
+        assert_eq!(payload.pregnancy_tests.len(), 1);
+        assert_eq!(payload.pregnancy_tests[0].date, "2026-11-15");
+        assert_eq!(payload.pregnancy_tests[0].result, "Negative");
+
+        assert_eq!(payload.reminders.len(), 1);
+        assert_eq!(payload.reminders[0].r#type, "Pill");
+        assert_eq!(payload.reminders[0].time_of_day.as_deref(), Some("20:00"));
+        assert_eq!(payload.reminders[0].next_date.as_deref(), Some("2026-11-17"));
+        assert!(payload.reminders[0].is_active);
+
+        // Permissions bitmask: 0x01 (cycle) | 0x02 (flow) | 0x10 (birth_control) = 0x13 = 19
+        let perms = payload.permissions.as_ref().expect("Permissions should be present");
+        assert_eq!(perms.to_bitmask(), 0x01 | 0x02 | 0x10);
+        assert!(perms.share_cycle_phase);
+        assert!(perms.share_flow_intensity);
+        assert!(perms.share_birth_control);
+        assert!(!perms.share_symptoms_moods);
+
+        // Test roundtrip serialization to JSON (canonical object format)
+        let serialized = serde_json::to_string(&payload).expect("Should serialize SyncPayload");
+        let serialized_val: Value = serde_json::from_str(&serialized).unwrap();
+        assert!(serialized_val["permissions"].is_object(), "Canonical SyncPayload must serialize permissions as JSON object");
+        let roundtrip: SyncPayload = serde_json::from_str(&serialized).expect("Should deserialize roundtrip JSON");
+        assert_eq!(payload, roundtrip);
+
+        // Test legacy snake_case JSON + bitmask permissions compatibility
+        let legacy_json = serde_json::json!({
+            "last_updated": 1731772800000i64,
+            "birth_control": {
+                "type": "IUD",
+                "is_active": true
+            },
+            "entries": [
+                {
+                    "date": "2026-11-16",
+                    "intensity": 0,
+                    "notes": null,
+                    "sexual_relations": null,
+                    "pain_level": null,
+                    "symptoms": null
+                }
+            ],
+            "pregnancy_tests": [],
+            "reminders": [],
+            "permissions": 1
+        }).to_string();
+
+        let legacy_payload: SyncPayload = serde_json::from_str(&legacy_json).expect("Should deserialize legacy snake_case JSON");
+        assert_eq!(legacy_payload.last_updated, 1731772800000);
+        assert_eq!(legacy_payload.birth_control.unwrap().r#type, "IUD");
+        let legacy_perms = legacy_payload.permissions.expect("Legacy bitmask should decode to PartnerPermissions");
+        assert_eq!(legacy_perms.to_bitmask(), 1);
+        assert!(legacy_perms.share_cycle_phase);
+        assert!(!legacy_perms.share_flow_intensity);
+    }
+
+    #[test]
+    fn test_filtered_payload_preserves_timestamp_and_fields() {
+        let _lock = TEST_MUTEX.lock().unwrap();
+        let key_bytes = [9u8; 32];
+        let key_b64 = general_purpose::STANDARD.encode(key_bytes);
+        let partner_id = "partner_test_preserve";
+        let timestamp = 1731775000000i64;
+
+        let sample_entries = serde_json::json!([
+            {
+                "date": "2026-11-16",
+                "intensity": 3,
+                "notes": "Positive hCG test",
+                "sexualRelations": "None",
+                "painLevel": 2,
+                "symptoms": "Fatigue"
+            }
+        ]).to_string();
+
+        let sample_bc = serde_json::json!({
+            "type": "Implant",
+            "isActive": true,
+            "reminderTime": "08:30"
+        }).to_string();
+
+        // Case 1: Cycle phase bit 0x01 is OFF, contraception bit 0x10 is ON
+        save_partner_permissions_internal(PartnerPermissions {
+            share_cycle_phase: false,
+            share_flow_intensity: false,
+            share_symptoms_moods: false,
+            share_birth_control: true,
+            share_pregnancy_tests: false,
+            share_sexual_activity: false,
+        });
+
+        let enc = generate_filtered_payload_internal(timestamp, Some(sample_bc.clone()), sample_entries.clone(), partner_id, &key_b64);
+        let dec_str = decrypt_payload_internal(&enc, partner_id, &key_bytes).expect("Decryption should succeed");
+        let payload: SyncPayload = serde_json::from_str(&dec_str).expect("Payload should parse");
+
+        // Verification 1: Timestamp must be preserved even when cycle phase bit 0x01 is off
+        assert_eq!(payload.last_updated, timestamp, "Timestamp must NOT be zeroed out when cycle phase is off");
+        // Verification 2: Entries and pregnancy tests must be cleared
+        assert!(payload.entries.is_empty(), "Entries must be empty when cycle phase is off");
+        assert!(payload.pregnancy_tests.is_empty(), "Pregnancy tests must be empty when cycle phase is off");
+        // Verification 3: Birth control and reminderTime preserved when 0x10 is on
+        assert!(payload.birth_control.is_some(), "Birth control must be preserved when 0x10 is on");
+        let bc = payload.birth_control.as_ref().unwrap();
+        assert_eq!(bc.r#type, "Implant");
+        assert_eq!(bc.reminder_time.as_deref(), Some("08:30"));
+        // Verification 4: Permissions bitmask has bit 0x10 set, but not 0x01
+        let mask1 = payload.permissions.as_ref().unwrap().to_bitmask();
+        assert_eq!(mask1 & 0x01, 0);
+        assert_ne!(mask1 & 0x10, 0);
+
+        // Case 2: Contraception bit 0x10 is OFF, cycle phase bit 0x01 is ON
+        save_partner_permissions_internal(PartnerPermissions {
+            share_cycle_phase: true,
+            share_flow_intensity: true,
+            share_symptoms_moods: true,
+            share_birth_control: false,
+            share_pregnancy_tests: true,
+            share_sexual_activity: true,
+        });
+
+        let enc2 = generate_filtered_payload_internal(timestamp, Some(sample_bc), sample_entries, partner_id, &key_b64);
+        let dec_str2 = decrypt_payload_internal(&enc2, partner_id, &key_bytes).expect("Decryption should succeed");
+        let payload2: SyncPayload = serde_json::from_str(&dec_str2).expect("Payload should parse");
+
+        assert_eq!(payload2.last_updated, timestamp);
+        assert!(!payload2.entries.is_empty(), "Entries should be retained when cycle phase is on");
+        assert!(payload2.birth_control.is_none(), "Birth control must be None when 0x10 is off");
+        assert!(payload2.reminders.is_empty(), "Reminders must be cleared when 0x10 is off");
+        let mask2 = payload2.permissions.as_ref().unwrap().to_bitmask();
+        assert_ne!(mask2 & 0x01, 0);
+        assert_eq!(mask2 & 0x10, 0);
+    }
+
+    #[test]
+    fn test_partner_permissions_defaults_and_bitmask_parity() {
+        let default_perms = PartnerPermissions::default();
+        assert!(!default_perms.share_cycle_phase);
+        assert!(!default_perms.share_flow_intensity);
+        assert!(!default_perms.share_symptoms_moods);
+        assert!(!default_perms.share_birth_control);
+        assert!(!default_perms.share_pregnancy_tests);
+        assert!(!default_perms.share_sexual_activity);
+        assert_eq!(default_perms.to_bitmask(), 0);
+        assert_eq!(PartnerPermissions::from_bitmask(0), default_perms);
+
+        // Verify partial JSON object defaults all omitted flags to false (fail-closed)
+        let partial: PartnerPermissions = serde_json::from_str("{}").expect("Empty JSON object should deserialize");
+        assert_eq!(partial, default_perms);
+
+        // Verify all 6 single-bit flags & full combination round-trip
+        let single_bits = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x3f];
+        for mask in single_bits {
+            let decoded = PartnerPermissions::from_bitmask(mask);
+            assert_eq!(decoded.to_bitmask(), mask, "Bitmask {} must round-trip losslessly", mask);
+        }
+
+        // Verify camelCase alias decoding
+        let camel_json = r#"{
+            "shareCyclePhase": true,
+            "shareFlowIntensity": false,
+            "shareSymptomsMoods": true,
+            "shareBirthControl": false,
+            "sharePregnancyTests": true,
+            "shareSexualActivity": false
+        }"#;
+        let camel_perms: PartnerPermissions = serde_json::from_str(camel_json).expect("camelCase permissions should deserialize");
+        assert_eq!(camel_perms.to_bitmask(), 0x01 | 0x04 | 0x20);
+    }
+
+    #[test]
+    fn test_cross_layer_json_contract_and_sync_encryption_roundtrip() {
+        // Simulates exact Kotlin AppJson output (encodeDefaults = true) for SyncPayload
+        let kotlin_serialized = serde_json::json!({
+            "lastUpdated": 1731780000000i64,
+            "birthControl": {
+                "type": "Pill",
+                "isActive": true,
+                "reminderTime": "21:30"
+            },
+            "entries": [
+                {
+                    "date": "2026-11-16",
+                    "intensity": 2,
+                    "notes": null,
+                    "sexualRelations": null,
+                    "painLevel": 1,
+                    "symptoms": "Fatigue"
+                }
+            ],
+            "pregnancyTests": [],
+            "reminders": [
+                {
+                    "type": "Pill",
+                    "frequency": "Daily",
+                    "timeOfDay": "21:30",
+                    "nextDate": null,
+                    "isActive": true
+                }
+            ],
+            "permissions": {
+                "share_cycle_phase": true,
+                "share_flow_intensity": false,
+                "share_symptoms_moods": true,
+                "share_birth_control": true,
+                "share_pregnancy_tests": false,
+                "share_sexual_activity": false
+            }
+        }).to_string();
+
+        let key_bytes = [0x42u8; 32];
+        let key_b64 = general_purpose::STANDARD.encode(key_bytes);
+
+        // Encrypt using encrypt_for_sync_internal (Kotlin SyncManager outbound path)
+        let encrypted = encrypt_for_sync_internal(&kotlin_serialized, &key_b64).expect("encrypt_for_sync_internal should succeed");
+        let decrypted_json = decrypt_from_sync_internal(&encrypted, &key_b64).expect("decrypt_from_sync_internal should succeed");
+        assert_eq!(decrypted_json, kotlin_serialized);
+
+        // Parse in Rust and re-serialize canonically
+        let parsed: SyncPayload = serde_json::from_str(&decrypted_json).expect("Rust must parse Kotlin SyncPayload JSON");
+        assert_eq!(parsed.birth_control.as_ref().unwrap().reminder_time.as_deref(), Some("21:30"));
+        assert_eq!(parsed.permissions.as_ref().unwrap().to_bitmask(), 0x01 | 0x04 | 0x10);
+
+        let re_serialized = serde_json::to_string(&parsed).unwrap();
+        let re_val: Value = serde_json::from_str(&re_serialized).unwrap();
+        assert_eq!(re_val["lastUpdated"], 1731780000000i64);
+        assert_eq!(re_val["birthControl"]["type"], "Pill");
+        assert_eq!(re_val["birthControl"]["isActive"], true);
+        assert_eq!(re_val["birthControl"]["reminderTime"], "21:30");
+        assert_eq!(re_val["permissions"]["share_cycle_phase"], true);
+        assert_eq!(re_val["permissions"]["share_birth_control"], true);
+        assert_eq!(re_val["permissions"]["share_flow_intensity"], false);
+
+        // Verify null & omitted permissions and null reminderTime
+        let minimal_json = r#"{"lastUpdated": 1731780000000, "birthControl": {"type": "IUD", "isActive": false, "reminderTime": null}, "entries": [], "permissions": null}"#;
+        let minimal: SyncPayload = serde_json::from_str(minimal_json).expect("Minimal payload with null permissions/reminderTime should parse");
+        assert!(minimal.permissions.is_none());
+        assert_eq!(minimal.birth_control.as_ref().unwrap().is_active, false);
+        assert_eq!(minimal.birth_control.as_ref().unwrap().reminder_time, None);
+
+        // Verify legacy bitmask permissions round-trip through encrypt_for_sync_internal
+        let legacy_bitmask_json = r#"{"lastUpdated": 1731780000000, "birthControl": null, "entries": [], "permissions": 21}"#;
+        let enc_legacy = encrypt_for_sync_internal(legacy_bitmask_json, &key_b64).unwrap();
+        let dec_legacy = decrypt_from_sync_internal(&enc_legacy, &key_b64).unwrap();
+        let parsed_legacy: SyncPayload = serde_json::from_str(&dec_legacy).unwrap();
+        let lp = parsed_legacy.permissions.expect("Legacy bitmask 21 should decode");
+        assert_eq!(lp.to_bitmask(), 21); // 0x01 | 0x04 | 0x10
+        assert!(lp.share_cycle_phase);
+        assert!(lp.share_symptoms_moods);
+        assert!(lp.share_birth_control);
+        assert!(!lp.share_flow_intensity);
     }
 }

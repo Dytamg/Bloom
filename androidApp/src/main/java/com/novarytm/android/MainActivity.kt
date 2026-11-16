@@ -43,8 +43,9 @@ class MainActivity : FragmentActivity() {
             }
             val rustBridge = remember { RustBridge() }
             val notificationScheduler = remember { com.novarytm.notifications.NotificationScheduler(applicationContext) }
+            val backgroundSyncScheduler = remember { com.novarytm.sync.BackgroundSyncScheduler(applicationContext) }
             
-            App(database, driver, rustBridge, storage, notificationScheduler)
+            App(database, driver, rustBridge, storage, notificationScheduler, backgroundSyncScheduler)
         }
     }
 }

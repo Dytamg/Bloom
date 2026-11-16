@@ -347,7 +347,7 @@ class SyncManagerTest {
 
         // Populate partner's local database with cached owner data
         db.cycleQueries.insertEntry("2024-03-01", 3, "Cached note", "protected", 2, "Cramps")
-        db.cycleQueries.setBirthControl("Pill")
+        db.cycleQueries.setBirthControl("Pill", true)
         db.cycleQueries.insertPregnancyTest("2024-03-05", "Negative")
         db.cycleQueries.insertReminder("Pill", "Daily", "09:00", null, true)
 
@@ -377,7 +377,7 @@ class SyncManagerTest {
 
         // Populate database
         db.cycleQueries.insertEntry("2024-03-01", 3, "Cached entry", null, 2, "Cramps")
-        db.cycleQueries.setBirthControl("Pill")
+        db.cycleQueries.setBirthControl("Pill", true)
         assertEquals(1, db.cycleQueries.selectAllEntries().executeAsList().size)
 
         // Case A: User is Owner -> REVOKED must NEVER wipe local tables
@@ -435,14 +435,22 @@ class SyncManagerTest {
         val now = kotlin.time.Clock.System.now().toEpochMilliseconds()
         val lastSyncTs = 1_700_000_000_000L
 
-        // 1. Rollback payload (lastUpdated older than last sync) -> Rejected
-        val stalePayload = SyncPayload(
-            lastUpdated = lastSyncTs - 10_000L,
+        // 1. Rollback payload with 5-minute (300,000ms) clock skew tolerance
+        val clockSkewPayload = SyncPayload(
+            lastUpdated = lastSyncTs - 100_000L, // 100s ago, within 300s tolerance
             birthControl = null,
             entries = emptyList()
         )
-        val isStaleRejected = stalePayload.lastUpdated <= 0L || (lastSyncTs > 0L && stalePayload.lastUpdated < lastSyncTs)
-        assertTrue(isStaleRejected, "Stale payload with lastUpdated < lastSyncTimestamp MUST be rejected")
+        val isClockSkewAccepted = clockSkewPayload.lastUpdated > 0L && (lastSyncTs <= 0L || clockSkewPayload.lastUpdated >= lastSyncTs - 300_000L)
+        assertTrue(isClockSkewAccepted, "Payload within 5-minute clock skew tolerance MUST be accepted")
+
+        val stalePayload = SyncPayload(
+            lastUpdated = lastSyncTs - 400_000L, // > 5 minutes stale
+            birthControl = null,
+            entries = emptyList()
+        )
+        val isStaleRejected = stalePayload.lastUpdated <= 0L || (lastSyncTs > 0L && stalePayload.lastUpdated < lastSyncTs - 300_000L)
+        assertTrue(isStaleRejected, "Stale payload with lastUpdated < lastSyncTimestamp - 300,000ms MUST be rejected")
 
         // 2. Future payload (> 24 hours in future) -> Rejected
         val futurePayload = SyncPayload(
@@ -887,5 +895,239 @@ class SyncManagerTest {
             assertTrue(loggedDates.contains(LocalDate.parse("2024-03-02")))
             assertFalse(loggedDates.contains(LocalDate.parse("2024-03-03")), "0-flow check-in entry should not be counted as bleeding date in loggedDates")
         }
+    }
+
+    // =========================================================================
+    // V16 CROSS-LAYER CONTRACT, SCHEMA V2, PERMISSIONS & SERIALIZATION TESTS
+    // =========================================================================
+
+    @Test
+    fun testDatabaseSchemaV2AndBirthControlReminderTimePreservation() {
+        assertEquals(2L, NovarytmDatabase.Schema.version, "Schema version must be 2 after 1.sqm migration")
+        val db = createInMemoryDb()
+
+        // 1. Initial state: null
+        assertNull(db.cycleQueries.getBirthControl().executeAsOneOrNull())
+
+        // 2. Set active birth control with reminder time
+        db.cycleQueries.setBirthControlWithReminder("Combined Oral Pill", "09:00", true)
+        val initialBc = db.cycleQueries.getBirthControl().executeAsOneOrNull()
+        assertNotNull(initialBc)
+        assertEquals("Combined Oral Pill", initialBc.type)
+        assertEquals("09:00", initialBc.reminderTime)
+        assertEquals(true, initialBc.isActive)
+
+        // 3. Updating method via setBirthControl preserves existing reminderTime
+        db.cycleQueries.setBirthControl("Mini-Pill", true)
+        val updatedMethod = db.cycleQueries.getBirthControl().executeAsOneOrNull()
+        assertNotNull(updatedMethod)
+        assertEquals("Mini-Pill", updatedMethod.type)
+        assertEquals("09:00", updatedMethod.reminderTime, "setBirthControl must preserve existing reminderTime")
+        assertEquals(true, updatedMethod.isActive)
+
+        // 4. Selecting None / deactivating sets isActive = false and clears reminder when requested
+        db.cycleQueries.setBirthControlWithReminder("None", null, false)
+        val deactivated = db.cycleQueries.getBirthControl().executeAsOneOrNull()
+        assertNotNull(deactivated)
+        assertEquals("None", deactivated.type)
+        assertNull(deactivated.reminderTime)
+        assertEquals(false, deactivated.isActive)
+
+        // 5. Cleanup via deleteBirthControl()
+        db.cycleQueries.deleteBirthControl()
+        assertNull(db.cycleQueries.getBirthControl().executeAsOneOrNull())
+    }
+
+    @Test
+    fun testPartnerPermissionsDefaultsBitmaskAndSyncPayloadSerialization() {
+        // Owner-judged default: all flags default to false
+        val defaultPerms = PartnerPermissions()
+        assertFalse(defaultPerms.shareCyclePhase)
+        assertFalse(defaultPerms.shareFlowIntensity)
+        assertFalse(defaultPerms.shareSymptomsMoods)
+        assertFalse(defaultPerms.shareBirthControl)
+        assertFalse(defaultPerms.sharePregnancyTests)
+        assertFalse(defaultPerms.shareSexualActivity)
+        assertEquals(0, defaultPerms.toBitmask())
+
+        // Bitmask round-trip across all flags
+        val customPerms = PartnerPermissions(
+            shareCyclePhase = true,
+            shareFlowIntensity = false,
+            shareSymptomsMoods = true,
+            shareBirthControl = true,
+            sharePregnancyTests = true,
+            shareSexualActivity = false
+        )
+        val roundTripped = PartnerPermissions.fromBitmask(customPerms.toBitmask())
+        assertEquals(customPerms, roundTripped)
+
+        // Canonical SyncPayload JSON round-trip including SyncBirthControl.reminderTime
+        val payload = SyncPayload(
+            lastUpdated = 1_700_000_000_000L,
+            birthControl = SyncBirthControl(type = "Mini-Pill", isActive = true, reminderTime = "21:30"),
+            entries = listOf(SyncEntry("2024-03-01", 3, "Note", null, 2, "Cramps")),
+            pregnancyTests = listOf(SyncPregnancyTest("2024-03-05", "Negative")),
+            reminders = listOf(SyncReminder("Pill", "Daily", "21:30", "2024-03-02", true)),
+            permissions = customPerms
+        )
+        val encoded = AppJson.encodeToString(SyncPayload.serializer(), payload)
+        val decoded = AppJson.decodeFromString(SyncPayload.serializer(), encoded)
+        assertEquals(payload, decoded)
+        assertEquals("21:30", decoded.birthControl?.reminderTime)
+        assertEquals(true, decoded.permissions?.sharePregnancyTests)
+
+        // Legacy integer bitmask compatibility (e.g., Rust bitmask = 0x20 | 0x01 = 33)
+        val legacyBitmaskJson = """{"lastUpdated":1700000000000,"permissions":33}"""
+        val decodedLegacy = AppJson.decodeFromString(SyncPayload.serializer(), legacyBitmaskJson)
+        assertNotNull(decodedLegacy.permissions)
+        assertTrue(decodedLegacy.permissions!!.shareCyclePhase)
+        assertTrue(decodedLegacy.permissions!!.sharePregnancyTests)
+        assertFalse(decodedLegacy.permissions!!.shareBirthControl)
+    }
+
+    @Test
+    fun testDriveExceptionContractsAndCycleTrackerResilienceWithCorruptedDates() {
+        runBlocking {
+            val retryable = DriveSyncException("Transient 503", isRetryable = true)
+            assertTrue(retryable.isRetryable)
+            val nonRetryable = DriveSyncException("403 Forbidden", isRetryable = false)
+            assertFalse(nonRetryable.isRetryable)
+            val authEx = DriveAuthRequiredException("Auth required")
+            assertEquals("Auth required", authEx.message)
+            val quotaEx = DriveStorageFullException(15L, 15L)
+            assertEquals(15L, quotaEx.usedBytes)
+
+            val db = createInMemoryDb()
+            val tracker = CycleTracker(com.novarytm.ffi.RustBridge(), db.cycleQueries, this)
+            db.cycleQueries.insertEntry("2024-03-01", 3, "Valid 1", null, null, null)
+            db.cycleQueries.insertEntry("2026-02-31", 2, "Invalid date", null, null, null)
+            db.cycleQueries.insertEntry("2024-03-02", 4, "Valid 2", null, null, null)
+            db.cycleQueries.insertPregnancyTest("2024-03-06", "Negative")
+
+            tracker.refreshCycleState()
+            awaitCondition { tracker.loggedDates.value.size == 2 }
+            assertEquals(setOf(LocalDate.parse("2024-03-01"), LocalDate.parse("2024-03-02")), tracker.loggedDates.value)
+            assertEquals(1, db.cycleQueries.selectAllPregnancyTests().executeAsList().size)
+        }
+    }
+
+    @Test
+    fun testPendingSyncCoordinator_stateTransitionsAndSchedulerInvocation() {
+        val stateStore = object : SyncUploadStateStore {
+            private var pending = false
+            override fun hasPendingSyncUpload(): Boolean = pending
+            override fun setPendingSyncUpload(pending: Boolean) {
+                this.pending = pending
+            }
+        }
+        var scheduleCount = 0
+        var cancelCount = 0
+        val scheduler = object : SyncUploadScheduler {
+            override fun schedulePendingUpload() {
+                scheduleCount++
+            }
+
+            override fun cancelPendingUpload() {
+                cancelCount++
+            }
+        }
+
+        val coordinator = PendingSyncCoordinator(stateStore, scheduler)
+
+        // Default state: no pending upload
+        assertFalse(stateStore.hasPendingSyncUpload())
+
+        // Non-owner mode must not mark pending or schedule background upload
+        coordinator.markPendingAndSchedule(isOwnerMode = false)
+        assertFalse(stateStore.hasPendingSyncUpload())
+        assertEquals(0, scheduleCount)
+
+        // Owner mode marks pending and schedules background upload
+        coordinator.markPendingAndSchedule(isOwnerMode = true)
+        assertTrue(stateStore.hasPendingSyncUpload())
+        assertEquals(1, scheduleCount)
+
+        // Success / revoke clears pending flag and cancels scheduled work
+        coordinator.clearPendingAndCancel()
+        assertFalse(stateStore.hasPendingSyncUpload())
+        assertEquals(1, cancelCount)
+    }
+
+    @Test
+    fun testPregnancyTestReminderTypeNormalization() {
+        fun isPregnancyTestReminder(type: String): Boolean =
+            type.trim().replace(" ", "").equals("PregnancyTest", ignoreCase = true)
+
+        assertTrue(isPregnancyTestReminder("PregnancyTest"))
+        assertTrue(isPregnancyTestReminder("Pregnancy Test"))
+        assertTrue(isPregnancyTestReminder("pregnancy test"))
+        assertTrue(isPregnancyTestReminder("  Pregnancy Test  "))
+        assertFalse(isPregnancyTestReminder("Pill"))
+        assertFalse(isPregnancyTestReminder("Hormonal IUD Replacement (5 Years)"))
+    }
+
+    @Test
+    fun testZeroFlowEmptyEntryOmissionInGroupPeriodEntries() {
+        val entries = listOf(
+            CycleEntry(1L, "2024-03-01", 0, null, null, null, null),
+            CycleEntry(2L, "2024-03-02", 0, "   ", null, 0, ""),
+            CycleEntry(3L, "2024-03-03", 0, null, null, 2, "Cramps"),
+            CycleEntry(4L, "2024-03-05", 0, null, "Protected", null, null)
+        )
+
+        val groups = groupPeriodEntries(entries, includeZeroFlow = true)
+        assertEquals(2, groups.size, "Empty 0-flow entries must be omitted when grouping")
+        assertEquals(LocalDate.parse("2024-03-05"), groups[0].startDate)
+        assertEquals(LocalDate.parse("2024-03-03"), groups[1].startDate)
+    }
+
+    @Test
+    fun testPainLevelZeroParityInDbAndSyncModel() {
+        runBlocking {
+            val db = createInMemoryDb()
+            val tracker = CycleTracker(com.novarytm.ffi.RustBridge(), db.cycleQueries, this)
+
+            val date = LocalDate.parse("2024-03-18")
+            tracker.logNewPeriod(date = date, intensity = 2, notes = "No cramps", painLevel = 0, symptoms = "")
+            awaitCondition { db.cycleQueries.selectEntryByDate(date.toString()).executeAsOneOrNull() != null }
+
+            val stored = db.cycleQueries.selectEntryByDate(date.toString()).executeAsOne()
+            assertEquals(0, stored.painLevel, "painLevel == 0 must be persisted as 0 (not coerced to null)")
+
+            // Partial sexual relation update must preserve painLevel == 0
+            tracker.logSexualRelation(date, "Protected")
+            awaitCondition { db.cycleQueries.selectEntryByDate(date.toString()).executeAsOne().sexualRelations == "Protected" }
+            val afterRel = db.cycleQueries.selectEntryByDate(date.toString()).executeAsOne()
+            assertEquals(0, afterRel.painLevel)
+
+            // SyncEntry JSON round-trip preserves painLevel == 0
+            val syncEntry = SyncEntry(afterRel.date, afterRel.intensity ?: 0, afterRel.notes, afterRel.sexualRelations, afterRel.painLevel, afterRel.symptoms)
+            val decoded = AppJson.decodeFromString(SyncEntry.serializer(), AppJson.encodeToString(SyncEntry.serializer(), syncEntry))
+            assertEquals(0, decoded.painLevel)
+        }
+    }
+
+    @Test
+    fun testSyncUploadSchedulerPartnerPullScheduleAndCancel() {
+        var partnerPullScheduleCount = 0
+        var partnerPullCancelCount = 0
+        val scheduler = object : SyncUploadScheduler {
+            override fun schedulePendingUpload() {}
+            override fun cancelPendingUpload() {}
+            override fun schedulePeriodicPartnerPull() {
+                partnerPullScheduleCount++
+            }
+            override fun cancelPartnerPull() {
+                partnerPullCancelCount++
+            }
+        }
+
+        scheduler.schedulePeriodicPartnerPull()
+        assertEquals(1, partnerPullScheduleCount)
+        assertEquals(0, partnerPullCancelCount)
+
+        scheduler.cancelPartnerPull()
+        assertEquals(1, partnerPullCancelCount)
     }
 }

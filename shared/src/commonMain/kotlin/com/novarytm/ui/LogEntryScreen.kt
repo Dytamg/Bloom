@@ -406,7 +406,6 @@ fun CustomDateRangePickerDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        properties = androidx.compose.ui.window.DialogProperties(securePolicy = androidx.compose.ui.window.SecureFlagPolicy.SecureOn),
         containerColor = LocalAppColors.current.surface,
         title = {
             Column {

@@ -49,8 +49,12 @@ fun ShareSyncCodeScreen(
     
     var syncCode by remember { mutableStateOf<String?>(null) }
     var isGenerating by remember { mutableStateOf(false) }
+    var isRevoking by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
-    var partnerEmail by remember { mutableStateOf("") }
+    var partnerEmail by remember { mutableStateOf(storage.getPartnerEmail() ?: "") }
+    var isPaired by remember {
+        mutableStateOf(storage.getPrimarySyncFileId() != null || !storage.getPartnerEmail().isNullOrBlank())
+    }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
@@ -114,6 +118,7 @@ fun ShareSyncCodeScreen(
                             if (uploadedFileId == null) {
                                 errorMessage = AppStrings.get("failed_upload") + " (prepareAndUploadPayload returned null)"
                             } else {
+                                isPaired = true
                                 syncCode = syncManager?.generateEphemeralPayload(uploadedFileId)?.decodeToString()
                             }
                         } else {
@@ -199,37 +204,6 @@ fun ShareSyncCodeScreen(
                     Spacer(Modifier.width(8.dp))
                     Text(if (showCopiedToast) AppStrings.get("copied_toast") else AppStrings.get("copy_code"), style = MaterialTheme.typography.titleMedium)
                 }
-                
-                Spacer(Modifier.height(16.dp))
-                
-                var isRevoking by remember { mutableStateOf(false) }
-                
-                if (isRevoking) {
-                    CircularProgressIndicator(color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
-                } else {
-                    Button(
-                        onClick = {
-                            isRevoking = true
-                            scope.launch {
-                                val success = syncManager?.revokeAndRegenerate() == true
-                                if (success) {
-                                    syncCode = null
-                                    errorMessage = null
-                                    partnerEmail = ""
-                                    storage.savePartnerEmail("")
-                                } else {
-                                    errorMessage = "Failed to revoke access. Please try again."
-                                }
-                                isRevoking = false
-                            }
-                        },
-                        modifier = Modifier.fillMaxWidth().height(56.dp),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                    ) {
-                        Text("Revoke Access & Create New Code", style = MaterialTheme.typography.titleMedium)
-                    }
-                }
             } else if (errorMessage == null) {
                 if (isGenerating) {
                     CircularProgressIndicator(color = primaryColor, modifier = Modifier.padding(32.dp))
@@ -251,6 +225,40 @@ fun ShareSyncCodeScreen(
                         enabled = isEmailValid
                     ) {
                         Text(AppStrings.get("sign_in_button"), style = MaterialTheme.typography.titleMedium)
+                    }
+                }
+            }
+
+            if (isPaired || syncCode != null) {
+                Spacer(Modifier.height(16.dp))
+                if (isRevoking) {
+                    CircularProgressIndicator(color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
+                } else {
+                    Button(
+                        onClick = {
+                            isRevoking = true
+                            scope.launch {
+                                try {
+                                    val success = syncManager?.revokeAndRegenerate() == true
+                                    if (success) {
+                                        syncCode = null
+                                        errorMessage = null
+                                        isPaired = false
+                                        partnerEmail = ""
+                                        storage.savePartnerEmail("")
+                                    } else {
+                                        errorMessage = "Failed to revoke access. Please try again."
+                                    }
+                                } finally {
+                                    isRevoking = false
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().height(56.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Text("Revoke Access & Create New Code", style = MaterialTheme.typography.titleMedium)
                     }
                 }
             }

@@ -12,14 +12,26 @@ import com.novarytm.storage.SecureStorageManager
 
 actual class GoogleAuthManager(private val storage: SecureStorageManager) {
     private var accessToken: String? = null
+    private var _needsInteractiveReauth: Boolean = false
+    actual val needsInteractiveReauth: Boolean
+        get() = _needsInteractiveReauth
+    private var _lastAuthRecoverableError: Boolean = false
+    actual val lastAuthRecoverableError: Boolean
+        get() = _lastAuthRecoverableError
 
     actual suspend fun getAccessToken(scopes: List<String>): String? {
+        if (accessToken == null) {
+            _needsInteractiveReauth = true
+            _lastAuthRecoverableError = true
+        }
         return accessToken
     }
     
     actual suspend fun clearToken(token: String) {
         if (accessToken == token) {
             accessToken = null
+            _needsInteractiveReauth = true
+            _lastAuthRecoverableError = true
         }
     }
 
@@ -62,11 +74,15 @@ actual class GoogleAuthManager(private val storage: SecureStorageManager) {
                     
                     if (token != null && (grantedScopes.contains("drive.file") || grantedScopes.contains("drive"))) {
                         accessToken = token
+                        _needsInteractiveReauth = false
+                        _lastAuthRecoverableError = false
                         storage.setAuthFlowActive(false)
                         continuation.resume(true)
                     } else {
                         println("iOS Auth Warning: Token missing or drive.file scope not granted. Scopes: $grantedScopes")
                         accessToken = null
+                        _needsInteractiveReauth = true
+                        _lastAuthRecoverableError = true
                         storage.setAuthFlowActive(false)
                         continuation.resume(false)
                     }

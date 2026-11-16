@@ -186,6 +186,38 @@ class SecureStorageManager : com.novarytm.storage.SecureStorageManager {
         return getString("last_sync_timestamp")?.toLongOrNull() ?: 0L
     }
 
+    actual fun savePrimarySyncFileId(fileId: String?) {
+        if (fileId == null) {
+            val query = mutableMapOf<CFTypeRef?, CFTypeRef?>(
+                kSecClass to kSecClassGenericPassword,
+                kSecAttrAccount to "primary_sync_file_id".toCFString()
+            )
+            SecItemDelete(query.toCFDictionary())
+        } else {
+            saveString("primary_sync_file_id", fileId)
+        }
+    }
+
+    actual fun getPrimarySyncFileId(): String? {
+        return getString("primary_sync_file_id")
+    }
+
+    actual fun saveLastSuccessfulSyncWallclock(timestampMs: Long) {
+        saveString("last_successful_sync_wallclock", timestampMs.toString())
+    }
+
+    actual fun getLastSuccessfulSyncWallclock(): Long {
+        return getString("last_successful_sync_wallclock")?.toLongOrNull() ?: 0L
+    }
+
+    actual fun setPendingSyncUpload(pending: Boolean) {
+        saveString("pending_sync_upload", pending.toString())
+    }
+
+    actual fun hasPendingSyncUpload(): Boolean {
+        return getString("pending_sync_upload")?.toBooleanStrictOrNull() ?: false
+    }
+
     actual fun copyToClipboardSecurely(text: String) {
         val pasteboard = platform.UIKit.UIPasteboard.generalPasteboard
         pasteboard.string = text

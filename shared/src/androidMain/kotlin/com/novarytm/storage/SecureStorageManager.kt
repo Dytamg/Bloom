@@ -400,4 +400,32 @@ actual class SecureStorageManager(private val context: Context) {
     actual fun getLastSyncTimestamp(): Long {
         return sharedPreferences.getLong("last_sync_timestamp", 0L)
     }
+
+    actual fun savePrimarySyncFileId(fileId: String?) {
+        if (fileId == null) {
+            sharedPreferences.edit().remove("primary_sync_file_id").commit()
+        } else {
+            sharedPreferences.edit().putString("primary_sync_file_id", fileId).commit()
+        }
+    }
+
+    actual fun getPrimarySyncFileId(): String? {
+        return sharedPreferences.getString("primary_sync_file_id", null)
+    }
+
+    actual fun saveLastSuccessfulSyncWallclock(timestampMs: Long) {
+        sharedPreferences.edit().putLong("last_successful_sync_wallclock", timestampMs).commit()
+    }
+
+    actual fun getLastSuccessfulSyncWallclock(): Long {
+        return sharedPreferences.getLong("last_successful_sync_wallclock", 0L)
+    }
+
+    actual fun setPendingSyncUpload(pending: Boolean) {
+        sharedPreferences.edit().putBoolean("pending_sync_upload", pending).commit()
+    }
+
+    actual fun hasPendingSyncUpload(): Boolean {
+        return sharedPreferences.getBoolean("pending_sync_upload", false)
+    }
 }

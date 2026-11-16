@@ -11,5 +11,6 @@ fun MainViewController(): UIViewController = ComposeUIViewController {
     val (driver, database) = createDatabase(DriverFactory(), storage)
     val rustBridge = RustBridge()
     val notificationScheduler = com.novarytm.notifications.NotificationScheduler()
-    App(database, driver, rustBridge, storage, notificationScheduler)
+    val backgroundSyncScheduler = com.novarytm.sync.BackgroundSyncScheduler()
+    App(database, driver, rustBridge, storage, notificationScheduler, backgroundSyncScheduler)
 }

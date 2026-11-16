@@ -105,7 +105,6 @@ fun LockScreen(
     if (showResetConfirmDialog) {
         AlertDialog(
             onDismissRequest = { showResetConfirmDialog = false },
-            properties = androidx.compose.ui.window.DialogProperties(securePolicy = androidx.compose.ui.window.SecureFlagPolicy.SecureOn),
             title = { Text("Wipe All Data?") },
             text = { Text("Are you sure you want to wipe and reset Bloom? This action cannot be undone and all local health data will be permanently deleted.") },
             confirmButton = {

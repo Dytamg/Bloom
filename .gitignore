@@ -21,6 +21,7 @@ captures/
 
 # Graphify Knowledge Graph
 graphify-out/
+.graphify*
 
 # iOS-specific
 iosApp/DerivedData/

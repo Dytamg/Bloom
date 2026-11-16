@@ -16,8 +16,15 @@ CREATE TABLE BirthControl (
 );
 
 setBirthControl:
-INSERT OR REPLACE INTO BirthControl(id, type, isActive)
-VALUES (1, ?, 1);
+INSERT OR REPLACE INTO BirthControl(id, type, reminderTime, isActive)
+VALUES (1, ?, (SELECT reminderTime FROM BirthControl WHERE id = 1), ?);
+
+setBirthControlWithReminder:
+INSERT OR REPLACE INTO BirthControl(id, type, reminderTime, isActive)
+VALUES (1, ?, ?, ?);
+
+deactivateBirthControl:
+UPDATE BirthControl SET isActive = 0 WHERE id = 1;
 
 getBirthControl:
 SELECT * FROM BirthControl WHERE id = 1;

@@ -27,12 +27,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.compose.ui.window.SecureFlagPolicy
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
+import app.cash.sqldelight.coroutines.asFlow
+import app.cash.sqldelight.coroutines.mapToList
+import app.cash.sqldelight.coroutines.mapToOneOrNull
 import com.novarytm.db.CycleQueries
 import com.novarytm.notifications.NotificationScheduler
 import com.novarytm.sync.PartnerPermissions
 import kotlin.time.Clock
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.datetime.todayIn
@@ -173,12 +177,25 @@ fun BirthControlTab(
     var quizResult by remember { mutableStateOf<String?>(null) }
     
     val backgroundColor = MaterialTheme.colorScheme.background
+    val birthControlRecord by remember(queries) {
+        queries.getBirthControl().asFlow().mapToOneOrNull(Dispatchers.IO)
+    }.collectAsState(initial = null)
+    val bcReminders by remember(queries) {
+        queries.selectAllReminders().asFlow().mapToList(Dispatchers.IO)
+    }.collectAsState(initial = emptyList())
+    val activeBc = birthControlRecord?.takeIf {
+        it.isActive != false && !it.type.equals("None", ignoreCase = true)
+    }
+    val effectiveMethod = currentMethod?.takeIf {
+        it.isNotBlank() && !it.equals("None", ignoreCase = true)
+    } ?: activeBc?.type
+    val activeReminderTime = activeBc?.reminderTime?.takeIf { it.isNotBlank() }
 
     Box(modifier = Modifier.fillMaxSize().background(backgroundColor)) {
         Column(modifier = Modifier.fillMaxSize().padding(20.dp).verticalScroll(rememberScrollState())) {
             
             // Current Method Section
-            if (currentMethod != null) {
+            if (effectiveMethod != null) {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = primaryColor.copy(alpha = 0.05f)),
                     shape = RoundedCornerShape(20.dp),
@@ -188,19 +205,35 @@ fun BirthControlTab(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Verified, contentDescription = null, tint = primaryColor)
                             Spacer(Modifier.width(8.dp))
-                            Text("Your Active Method", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), color = primaryColor)
+                            Text(
+                                if (isPartner) "Partner's Active Method" else "Your Active Method",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                color = primaryColor
+                            )
                         }
-                        Text(currentMethod, style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold))
+                        Text(effectiveMethod, style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold))
+                        if (activeReminderTime != null) {
+                            Spacer(Modifier.height(8.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Schedule, contentDescription = null, tint = primaryColor, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = "Reminder: $activeReminderTime",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                                    color = primaryColor
+                                )
+                            }
+                        }
                         
                         Spacer(Modifier.height(16.dp))
                         
                         // Recommendations based on method
                         val recommendation = when {
-                            currentMethod.contains("Pill", ignoreCase = true) -> "Take your pill at the same time every day for maximum effectiveness."
-                            currentMethod.contains("IUD", ignoreCase = true) -> "Check your IUD strings monthly and note the expiration date."
-                            currentMethod.contains("Injection", ignoreCase = true) -> "Schedule your next appointment for 12 weeks from your last shot."
-                            currentMethod.contains("Patch", ignoreCase = true) -> "Apply a new patch on the same day every week for 3 weeks."
-                            currentMethod.contains("Ring", ignoreCase = true) -> "Keep the ring in place for 3 weeks, then remove for 1 week."
+                            effectiveMethod.contains("Pill", ignoreCase = true) -> "Take your pill at the same time every day for maximum effectiveness."
+                            effectiveMethod.contains("IUD", ignoreCase = true) -> "Check your IUD strings monthly and note the expiration date."
+                            effectiveMethod.contains("Injection", ignoreCase = true) -> "Schedule your next appointment for 12 weeks from your last shot."
+                            effectiveMethod.contains("Patch", ignoreCase = true) -> "Apply a new patch on the same day every week for 3 weeks."
+                            effectiveMethod.contains("Ring", ignoreCase = true) -> "Keep the ring in place for 3 weeks, then remove for 1 week."
                             else -> "Consult with your doctor if you experience unusual side effects."
                         }
                         
@@ -211,6 +244,35 @@ fun BirthControlTab(
                                 Text(recommendation, style = MaterialTheme.typography.bodyMedium, color = Color.DarkGray)
                             }
                         }
+                    }
+                }
+            } else if (isPartner) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    shape = RoundedCornerShape(20.dp),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp).border(1.dp, Color.LightGray.copy(alpha = 0.4f), RoundedCornerShape(20.dp))
+                ) {
+                    Column(modifier = Modifier.padding(20.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Outlined.Info, contentDescription = null, tint = Color.Gray)
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "Partner's Birth Control",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                color = Color.Gray
+                            )
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "None",
+                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                            color = LocalAppColors.current.textPrimary
+                        )
+                        Text(
+                            "No active birth control method logged.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.Gray
+                        )
                     }
                 }
             }
@@ -233,13 +295,55 @@ fun BirthControlTab(
                 }
             }
 
-            if (currentMethod != null && !isPartner) {
+            if (effectiveMethod != null && !isPartner) {
                 ReminderSection(
-                    currentMethod = currentMethod,
+                    currentMethod = effectiveMethod,
                     queries = queries,
                     notificationScheduler = notificationScheduler,
                     primaryColor = primaryColor
                 )
+            }
+            val savedBcReminders = bcReminders.filter {
+                !it.type.replace(" ", "").equals("PregnancyTest", ignoreCase = true)
+            }
+            if (savedBcReminders.isNotEmpty()) {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color.White),
+                    shape = RoundedCornerShape(20.dp),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp).border(1.dp, primaryColor.copy(alpha = 0.3f), RoundedCornerShape(20.dp))
+                ) {
+                    Column(modifier = Modifier.padding(20.dp)) {
+                        Text(
+                            if (isPartner) "Synced Reminders" else "Saved Reminders",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = primaryColor
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        savedBcReminders.forEach { reminder ->
+                            val dateStr = when (reminder.frequency) {
+                                "Daily" -> ""
+                                "Once" -> " on ${reminder.nextDate ?: ""}"
+                                else -> " starting ${reminder.nextDate ?: ""}"
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.NotificationsActive, contentDescription = null, tint = primaryColor, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(10.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(reminder.type, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
+                                    Text("${reminder.frequency} at ${reminder.timeOfDay ?: "N/A"}$dateStr", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                                }
+                                if (!isPartner) {
+                                    IconButton(onClick = { queries.deleteReminder(reminder.id) }) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Delete Reminder", tint = Color.Gray)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             // CTA
@@ -356,7 +460,7 @@ fun BirthControlTab(
         }
 
         if (showMethodSelector) {
-            Dialog(onDismissRequest = { showMethodSelector = false }, properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn)) {
+            Dialog(onDismissRequest = { showMethodSelector = false }) {
                 Card(
                     shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(containerColor = Color.White)
@@ -477,7 +581,7 @@ fun QuizOverlay(onClose: () -> Unit, onComplete: (BCOption) -> Unit, primaryColo
         } else emptyList()
     }
     
-    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false, securePolicy = SecureFlagPolicy.SecureOn)) {
+    Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Box(modifier = Modifier.fillMaxSize().background(Color.White), contentAlignment = Alignment.Center) {
             IconButton(onClick = onClose, modifier = Modifier.align(Alignment.TopEnd).padding(16.dp).background(Color.LightGray.copy(alpha=0.2f), CircleShape)) {
                 Icon(Icons.Default.Close, contentDescription = null)
@@ -717,7 +821,9 @@ fun ReminderSection(
     
     if (showSetup) {
         var showTimePicker by remember { mutableStateOf(false) }
-        var selectedTimeStr by remember { mutableStateOf("09:00") }
+        var selectedTimeStr by remember(currentMethod) {
+            mutableStateOf(queries.getBirthControl().executeAsOneOrNull()?.reminderTime ?: "09:00")
+        }
         var showDatePicker by remember { mutableStateOf(false) }
         var selectedDate by remember { mutableStateOf(Clock.System.todayIn(TimeZone.currentSystemDefault())) }
 
@@ -727,7 +833,6 @@ fun ReminderSection(
             )
             DatePickerDialog(
                 onDismissRequest = { showDatePicker = false },
-                properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
                 colors = DatePickerDefaults.colors(containerColor = LocalAppColors.current.surface),
                 confirmButton = {
                     TextButton(onClick = {
@@ -754,10 +859,12 @@ fun ReminderSection(
         }
 
         if (showTimePicker) {
-            val timePickerState = rememberTimePickerState(initialHour = 9, initialMinute = 0)
+            val initialParts = selectedTimeStr.split(":")
+            val initialHour = initialParts.getOrNull(0)?.toIntOrNull()?.coerceIn(0, 23) ?: 9
+            val initialMinute = initialParts.getOrNull(1)?.toIntOrNull()?.coerceIn(0, 59) ?: 0
+            val timePickerState = rememberTimePickerState(initialHour = initialHour, initialMinute = initialMinute)
             AlertDialog(
                 onDismissRequest = { showTimePicker = false },
-                properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
                 containerColor = LocalAppColors.current.surface,
                 title = { Text("Select Time") },
                 text = {
@@ -784,7 +891,6 @@ fun ReminderSection(
 
         AlertDialog(
             onDismissRequest = { showSetup = false },
-            properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
             containerColor = LocalAppColors.current.surface,
             title = { Text("Setup Reminder") },
             text = {
@@ -833,6 +939,8 @@ fun ReminderSection(
                     fun delayFor(date: kotlinx.datetime.LocalDate): Long {
                         return (LocalDateTime(date, targetTime).toInstant(tz).toEpochMilliseconds() - now.toEpochMilliseconds()).coerceAtLeast(1000L)
                     }
+
+                    queries.setBirthControlWithReminder(currentMethod, selectedTimeStr, true)
 
                     when {
                         isPill -> {
@@ -906,13 +1014,18 @@ fun PregnancyTestTab(
 ) {
     var showLogDialog by remember { mutableStateOf(false) }
     var showReminderDialog by remember { mutableStateOf(false) }
-    
-    // In a real app we'd observe the DB, for this demo we query on load/update.
-    var tests by remember { mutableStateOf(queries.selectAllPregnancyTests().executeAsList()) }
-    
-    val refreshTests = { tests = queries.selectAllPregnancyTests().executeAsList() }
 
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+    val tests by remember(queries) {
+        queries.selectAllPregnancyTests().asFlow().mapToList(Dispatchers.IO)
+    }.collectAsState(initial = queries.selectAllPregnancyTests().executeAsList())
+    val allReminders by remember(queries) {
+        queries.selectAllReminders().asFlow().mapToList(Dispatchers.IO)
+    }.collectAsState(initial = emptyList())
+    val ptReminders = remember(allReminders) {
+        allReminders.filter { it.type.replace(" ", "").equals("PregnancyTest", ignoreCase = true) }
+    }
+
+    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
         if (!isPartner) {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Button(onClick = { showLogDialog = true }, colors = ButtonDefaults.buttonColors(containerColor = primaryColor)) {
@@ -923,6 +1036,46 @@ fun PregnancyTestTab(
                 }
             }
             Spacer(Modifier.height(16.dp))
+        }
+
+        if (ptReminders.isNotEmpty()) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp).border(1.dp, primaryColor.copy(alpha = 0.3f), RoundedCornerShape(16.dp))
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        if (isPartner) "Synced Reminders" else "Monthly Reminders",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = primaryColor
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    ptReminders.forEach { reminder ->
+                        val dateStr = when (reminder.frequency) {
+                            "Daily" -> ""
+                            "Once" -> " on ${reminder.nextDate ?: ""}"
+                            else -> " starting ${reminder.nextDate ?: ""}"
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Default.NotificationsActive, contentDescription = null, tint = primaryColor, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Pregnancy Test", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
+                                Text("${reminder.frequency} at ${reminder.timeOfDay ?: "N/A"}$dateStr", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                            }
+                            if (!isPartner) {
+                                IconButton(onClick = { queries.deleteReminder(reminder.id) }) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete Reminder", tint = Color.Gray)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         Text("Test History", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
@@ -965,7 +1118,6 @@ fun PregnancyTestTab(
             )
             DatePickerDialog(
                 onDismissRequest = { showDatePicker = false },
-                properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
                 colors = DatePickerDefaults.colors(containerColor = LocalAppColors.current.surface),
                 confirmButton = {
                     TextButton(onClick = {
@@ -993,7 +1145,6 @@ fun PregnancyTestTab(
 
         AlertDialog(
             onDismissRequest = { showLogDialog = false },
-            properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
             containerColor = LocalAppColors.current.surface,
             title = { Text("Log Pregnancy Test") },
             text = {
@@ -1025,7 +1176,6 @@ fun PregnancyTestTab(
             confirmButton = {
                 TextButton(onClick = {
                     queries.insertPregnancyTest(selectedDate.toString(), selectedResult)
-                    refreshTests()
                     showLogDialog = false
                 }) {
                     Text("Save", color = primaryColor)
@@ -1049,7 +1199,6 @@ fun PregnancyTestTab(
             )
             DatePickerDialog(
                 onDismissRequest = { showDatePicker = false },
-                properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
                 colors = DatePickerDefaults.colors(containerColor = LocalAppColors.current.surface),
                 confirmButton = {
                     TextButton(onClick = {
@@ -1079,7 +1228,6 @@ fun PregnancyTestTab(
             val timePickerState = rememberTimePickerState(initialHour = 10, initialMinute = 0)
             AlertDialog(
                 onDismissRequest = { showTimePicker = false },
-                properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
                 containerColor = LocalAppColors.current.surface,
                 title = { Text("Select Time") },
                 text = {
@@ -1106,7 +1254,6 @@ fun PregnancyTestTab(
 
         AlertDialog(
             onDismissRequest = { showReminderDialog = false },
-            properties = DialogProperties(securePolicy = SecureFlagPolicy.SecureOn),
             containerColor = LocalAppColors.current.surface,
             title = { Text("Monthly Reminder") },
             text = {

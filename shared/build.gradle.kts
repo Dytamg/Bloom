@@ -87,6 +87,9 @@ kotlin {
             
             // Google Sign In
             implementation("com.google.android.gms:play-services-auth:21.0.0")
+
+            // WorkManager for reliable background sync uploads
+            implementation("androidx.work:work-runtime-ktx:2.11.2")
         }
         iosMain.dependencies {
             implementation("app.cash.sqldelight:native-driver:2.0.2")

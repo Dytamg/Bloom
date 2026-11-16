@@ -88,36 +88,15 @@ actual class DriverFactory(private val context: Context) {
         // alive for the lifetime of the connection pool.
         val factory = SupportOpenHelperFactory(passphrase)
 
-        // H1 FIX: Use a custom Callback that runs CREATE TABLE IF NOT EXISTS instead of
-        // the schema's default CREATE TABLE. This prevents SupportSQLiteOpenHelper's version
-        // checking from either throwing (table already exists) or recreating empty tables.
-        // The schema is still passed for the version number, but the actual table creation
-        // is handled by our safe callback.
-        val safeCallback = object : androidx.sqlite.db.SupportSQLiteOpenHelper.Callback(1) {
-            override fun onCreate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
-
-                db.execSQL("CREATE TABLE IF NOT EXISTS CycleEntry (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL UNIQUE, intensity INTEGER, notes TEXT, sexualRelations TEXT, painLevel INTEGER, symptoms TEXT);")
-                db.execSQL("CREATE TABLE IF NOT EXISTS BirthControl (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, reminderTime TEXT, isActive INTEGER DEFAULT 1);")
-                db.execSQL("CREATE TABLE IF NOT EXISTS PregnancyTest (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL UNIQUE, result TEXT NOT NULL);")
-                db.execSQL("CREATE TABLE IF NOT EXISTS Reminder (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, frequency TEXT NOT NULL, timeOfDay TEXT, nextDate TEXT, isActive INTEGER DEFAULT 1);")
-            }
-            override fun onUpgrade(db: androidx.sqlite.db.SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {
-
-                // No migrations needed — just ensure tables exist
-                onCreate(db)
-            }
-            override fun onOpen(db: androidx.sqlite.db.SupportSQLiteDatabase) {
-
-            }
-        }
+        val migrationCallback = AndroidSqliteDriver.Callback(SafeMigrationSchema)
 
         fun openDriver(f: SupportOpenHelperFactory): SqlDriver {
             return AndroidSqliteDriver(
-                schema = NovarytmDatabase.Schema,
+                schema = SafeMigrationSchema,
                 context = context,
                 name = "novarytm.db",
                 factory = f,
-                callback = safeCallback
+                callback = migrationCallback
             )
         }
 
@@ -126,9 +105,16 @@ actual class DriverFactory(private val context: Context) {
             if (dbFile.exists()) {
                 try {
                     val driver = openDriver(factory)
-                    // Verify we can read/write from the database using a valid DDL command (SELECT via driver.execute throws code 0)
-                    driver.execute(null, "CREATE TABLE IF NOT EXISTS CycleEntry (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT NOT NULL UNIQUE, intensity INTEGER, notes TEXT, sexualRelations TEXT, painLevel INTEGER, symptoms TEXT);", 0)
-                    val walFile = File(dbFile.absolutePath + "-wal")
+                    // Verify we can read the decrypted schema
+                    driver.executeQuery(
+                        identifier = null,
+                        sql = "SELECT count(*) FROM sqlite_master;",
+                        mapper = { cursor ->
+                            cursor.next()
+                            app.cash.sqldelight.db.QueryResult.Unit
+                        },
+                        parameters = 0
+                    )
 
                     return driver
                 } catch (e: Exception) {

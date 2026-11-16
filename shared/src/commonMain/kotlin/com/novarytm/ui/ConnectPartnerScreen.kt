@@ -163,10 +163,15 @@ fun ConnectPartnerScreen(
                                 if (timestamp != null && (now - timestamp) in -60_000L..SYNC_CODE_EXPIRATION_MS) {
                                     syncCodeAttempts = 0
                                     val keyBytes = Base64.Default.decode(encryptionKeyBase64)
-                                        
-                                    // Trigger Google Sign In before completing
-                                    googleAuthManager.signIn()
-                                    onIdEntered(fileId, keyBytes)
+
+                                    // Require successful Google Sign-In before completing pairing
+                                    val signedIn = googleAuthManager.signIn()
+                                    if (signedIn) {
+                                        onIdEntered(fileId, keyBytes)
+                                    } else {
+                                        keyBytes.fill(0)
+                                        errorMessage = AppStrings.get("auth_cancelled")
+                                    }
                                 } else {
                                     syncCodeAttempts++
                                     if (syncCodeAttempts >= 3) {
@@ -182,9 +187,15 @@ fun ConnectPartnerScreen(
                                 errorMessage = AppStrings.get("invalid_format")
                             }
                         } catch (e: Exception) {
+                            if (e is kotlinx.coroutines.CancellationException) throw e
+                            syncCodeAttempts++
+                            if (syncCodeAttempts >= 3) {
+                                syncCodeLockedUntil = Clock.System.now().toEpochMilliseconds() + 30_000L
+                            }
                             errorMessage = AppStrings.get("invalid_code")
+                        } finally {
+                            isLoading = false
                         }
-                        isLoading = false
                     }
                 },
                 modifier = Modifier.fillMaxWidth().height(56.dp),

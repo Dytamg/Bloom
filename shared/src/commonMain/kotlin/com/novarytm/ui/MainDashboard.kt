@@ -26,13 +26,20 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import app.cash.sqldelight.coroutines.asFlow
+import app.cash.sqldelight.coroutines.mapToList
+import com.novarytm.auth.GoogleAuthManager
 import com.novarytm.db.CycleEntry
 import com.novarytm.ffi.RustBridge
 import com.novarytm.tracker.CycleTracker
+import com.novarytm.sync.PartnerPermissions
 import com.novarytm.sync.SyncManager
 import com.novarytm.utils.AppStrings
 import kotlinx.datetime.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.IO
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun MainDashboard(
@@ -43,6 +50,9 @@ fun MainDashboard(
     userId: String,
     isPartnerView: Boolean = false,
     syncManager: SyncManager? = null,
+    googleAuthManager: GoogleAuthManager? = null,
+    partnerPerms: PartnerPermissions? = null,
+    onSyncComplete: () -> Unit = {},
     queries: com.novarytm.db.CycleQueries,
     onLogClick: () -> Unit,
     onSettingsClick: () -> Unit,
@@ -83,7 +93,7 @@ fun MainDashboard(
     val lastDate = latestCycleStartDate ?: Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).date.toString()
     
     val currentPhase by produceState(
-        initialValue = "Loading",
+        initialValue = if (latestCycleStartDate == null) "Hidden" else "Loading",
         key1 = lastDate,
         key2 = avgLength
     ) {
@@ -97,8 +107,12 @@ fun MainDashboard(
     }
     
     val currentDay by cycleTracker.currentCycleDay.collectAsState()
-    val partnerPerms = remember(isPartnerView) { if (isPartnerView) rustBridge.getPartnerPermissions() else com.novarytm.sync.PartnerPermissions() }
-    val canShowPhase = !isPartnerView || partnerPerms.shareCyclePhase
+    val effectivePartnerPerms = if (isPartnerView) {
+        partnerPerms ?: rustBridge.getPartnerPermissions()
+    } else {
+        PartnerPermissions()
+    }
+    val canShowPhase = !isPartnerView || effectivePartnerPerms.shareCyclePhase
 
     val appColors = LocalAppColors.current
     val periodColor = appColors.primary
@@ -131,11 +145,15 @@ fun MainDashboard(
                         if (!isRefreshing && syncManager != null) {
                             isRefreshing = true
                             coroutineScope.launch {
-                                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                                    syncManager.manualRefresh()
+                                try {
+                                    withContext(Dispatchers.IO) {
+                                        syncManager.manualRefresh()
+                                    }
+                                    cycleTracker.refreshCycleState()
+                                    onSyncComplete()
+                                } finally {
+                                    isRefreshing = false
                                 }
-                                cycleTracker.refreshCycleState()
-                                isRefreshing = false
                             }
                         }
                     },
@@ -164,7 +182,14 @@ fun MainDashboard(
 
         // Cycle Visualizer
         Box(contentAlignment = Alignment.Center) {
-            if (canShowPhase && currentPhase != "Invalid Date" && currentPhase != "Hidden") {
+            if (canShowPhase && currentPhase == "Loading") {
+                Box(
+                    modifier = Modifier.size(240.dp).clip(CircleShape).background(Color(0xFFF3F4F6)).padding(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(color = periodColor)
+                }
+            } else if (canShowPhase && currentPhase != "Invalid Date" && currentPhase != "Hidden") {
                 CyclePhaseVisualizer(
                     phase = currentPhase,
                     currentDay = if (lastEntryDate == null) 0 else currentDay,
@@ -185,7 +210,7 @@ fun MainDashboard(
                         )
                     } else if (entries.isEmpty()) {
                         Text(
-                            text = "No cycle logs yet",
+                            text = if (isPartnerView) "Waiting for partner data" else "No cycle logs yet",
                             style = MaterialTheme.typography.titleMedium,
                             color = Color.Gray,
                             textAlign = TextAlign.Center
@@ -212,7 +237,7 @@ fun MainDashboard(
                         }
                     } else {
                         Text(
-                            text = "Phase hidden",
+                            text = if (isPartnerView) "Predictions not shared" else "Phase hidden",
                             style = MaterialTheme.typography.titleMedium,
                             color = Color.Gray,
                             textAlign = TextAlign.Center
@@ -227,52 +252,75 @@ fun MainDashboard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Schedule, contentDescription = null, tint = periodColor, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(8.dp))
-                if (canShowPhase && currentPhase != "Hidden") {
+                if (canShowPhase && currentPhase == "Loading") {
+                    Text("Updating predictions...", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
+                } else if (canShowPhase && currentPhase != "Hidden") {
                     val daysUntil = avgLength - currentDay
                     val msg = if (daysUntil >= 0) "$daysUntil days until next cycle" else "Period late by ${-daysUntil} days"
                     Text(msg, style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
                 } else {
-                    Text(if (!canShowPhase) "Predictions hidden by partner" else if (entries.isEmpty()) "Log symptoms to view predictions" else "Predictions not shared", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
+                    val msg = when {
+                        !canShowPhase -> "Predictions hidden by partner"
+                        entries.isEmpty() -> if (isPartnerView) "Waiting for partner data" else "Log symptoms to view predictions"
+                        else -> "Predictions not shared"
+                    }
+                    Text(msg, style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
                 }
             }
         }
 
         // Active Reminders
-        if (!isPartnerView) {
-            var refreshKey by remember { mutableStateOf(0) }
-            val reminders = remember(refreshKey) { queries.selectAllReminders().executeAsList() }
-            if (reminders.isNotEmpty()) {
-                Text("Active Reminders", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
-                Spacer(Modifier.height(8.dp))
-                reminders.forEach { reminder ->
-                    Card(
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                        colors = CardDefaults.cardColors(containerColor = periodColor.copy(alpha = 0.15f)),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.NotificationsActive, contentDescription = null, tint = periodColor)
-                            Spacer(Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(reminder.type, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), color = Color.DarkGray)
-                                val dateStr = when (reminder.frequency) {
-                                    "Daily" -> ""
-                                    "Once" -> " on ${reminder.nextDate ?: ""}"
-                                    else -> " starting ${reminder.nextDate ?: ""}"
-                                }
-                                Text("${reminder.frequency} at ${reminder.timeOfDay ?: "N/A"}$dateStr", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+        val allReminders by remember(queries) {
+            queries.selectAllReminders().asFlow().mapToList(Dispatchers.IO)
+        }.collectAsState(initial = emptyList())
+        val reminders = remember(allReminders, isPartnerView, effectivePartnerPerms) {
+            if (!isPartnerView) {
+                allReminders
+            } else {
+                allReminders.filter { rm ->
+                    if (rm.type.equals("Pregnancy Test", ignoreCase = true)) {
+                        effectivePartnerPerms.sharePregnancyTests
+                    } else {
+                        effectivePartnerPerms.shareBirthControl
+                    }
+                }
+            }
+        }
+        if (reminders.isNotEmpty()) {
+            Text(
+                if (isPartnerView) "Partner Reminders" else "Active Reminders",
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+            )
+            Spacer(Modifier.height(8.dp))
+            reminders.forEach { reminder ->
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                    colors = CardDefaults.cardColors(containerColor = periodColor.copy(alpha = 0.15f)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.NotificationsActive, contentDescription = null, tint = periodColor)
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(reminder.type, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), color = Color.DarkGray)
+                            val dateStr = when (reminder.frequency) {
+                                "Daily" -> ""
+                                "Once" -> " on ${reminder.nextDate ?: ""}"
+                                else -> " starting ${reminder.nextDate ?: ""}"
                             }
+                            Text("${reminder.frequency} at ${reminder.timeOfDay ?: "N/A"}$dateStr", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                        }
+                        if (!isPartnerView) {
                             IconButton(onClick = {
                                 queries.deleteReminder(reminder.id)
-                                refreshKey++
                             }) {
                                 Icon(Icons.Default.Delete, contentDescription = "Delete Reminder", tint = Color.Gray)
                             }
                         }
                     }
                 }
-                Spacer(Modifier.height(16.dp))
             }
+            Spacer(Modifier.height(16.dp))
         }
 
         // Quick Log Button (Only for owner)
@@ -292,7 +340,7 @@ fun MainDashboard(
         Spacer(Modifier.height(24.dp))
 
         if (isPartnerView) {
-            PartnerStatsGrid(entries, birthControl, avgLength, rustBridge.getPartnerPermissions())
+            PartnerStatsGrid(entries, birthControl, avgLength, effectivePartnerPerms)
         } else {
             OwnerStatsGrid(entries, avgLength)
             
@@ -533,7 +581,10 @@ fun PartnerStatsGrid(entries: List<CycleEntry>, birthControl: com.novarytm.db.Bi
                         Icon(Icons.AutoMirrored.Filled.TrendingUp, contentDescription = null, tint = periodColor, modifier = Modifier.size(16.dp))
                     }
                     Spacer(Modifier.weight(1f))
-                    Text(if (permissions.shareCyclePhase) "$avgLength" else "??", style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold))
+                    Text(
+                        if (permissions.shareCyclePhase) (if (avgLength == 0) "--" else "$avgLength") else "??",
+                        style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold)
+                    )
                     Text("Avg. Cycle Length", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                 }
             }
@@ -594,14 +645,32 @@ fun PartnerStatsGrid(entries: List<CycleEntry>, birthControl: com.novarytm.db.Bi
                         Icon(Icons.Default.HealthAndSafety, contentDescription = null, tint = primaryVariant, modifier = Modifier.size(16.dp))
                     }
                     Spacer(Modifier.weight(1f))
-                    val bcText = if (permissions.shareBirthControl && birthControl != null) birthControl.type else "Not shared"
+                    val isBcActive = birthControl != null &&
+                        birthControl.isActive != false &&
+                        !birthControl.type.equals("None", ignoreCase = true)
+                    val bcText = if (permissions.shareBirthControl) {
+                        if (isBcActive) birthControl!!.type else "None"
+                    } else {
+                        "Not shared"
+                    }
                     Text(
                         text = bcText,
                         style = if (bcText.length > 8) MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold) else MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Text("Birth Control", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
+                    val bcSubtitle = if (permissions.shareBirthControl && isBcActive && !birthControl?.reminderTime.isNullOrBlank()) {
+                        "Birth Control · ${birthControl!!.reminderTime}"
+                    } else {
+                        "Birth Control"
+                    }
+                    Text(
+                        text = bcSubtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.Gray,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
         }

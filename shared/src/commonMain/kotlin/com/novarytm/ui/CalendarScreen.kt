@@ -330,13 +330,11 @@ fun CalendarScreen(
             if (isPartner && (partnerPerms?.shareSymptomsMoods != true)) {
                 emptySet()
             } else {
-                entries.filter {
-                    val intVal = it.intensity ?: 0
-                    intVal == 0 && (
-                        it.intensity == 0 ||
-                        !it.symptoms.isNullOrEmpty() ||
-                        (it.painLevel ?: 0) > 0 ||
-                        !it.notes.isNullOrEmpty()
+                entries.filter { entry ->
+                    (entry.intensity ?: 0) == 0 && (
+                        !entry.symptoms.isNullOrBlank() ||
+                        !entry.notes.isNullOrBlank() ||
+                        (entry.painLevel ?: 0) > 0
                     )
                 }.mapNotNull { runCatching { LocalDate.parse(it.date) }.getOrNull() }.toSet()
             }
@@ -346,7 +344,11 @@ fun CalendarScreen(
             if (isPartner && (partnerPerms?.shareSexualActivity != true)) {
                 emptyMap()
             } else {
-                entries.mapNotNull { entry -> entry.sexualRelations?.let { LocalDate.parse(entry.date) to it } }.toMap()
+                entries.mapNotNull { entry ->
+                    entry.sexualRelations?.takeIf { it.isNotBlank() }?.let { rel ->
+                        runCatching { LocalDate.parse(entry.date) }.getOrNull()?.let { it to rel }
+                    }
+                }.toMap()
             }
         }
 
@@ -358,7 +360,7 @@ fun CalendarScreen(
                 } else {
                     periodGroups.filter { group ->
                         if (group.maxIntensity == 0) {
-                            partnerPerms.shareSymptomsMoods
+                            group.dailyEntries.any { hasPermittedPartnerContent(it, partnerPerms) }
                         } else {
                             true
                         }
@@ -366,6 +368,16 @@ fun CalendarScreen(
                 }
             } else {
                 periodGroups
+            }
+        }
+        val dayLevelSharedEntries = remember(entries, isPartner, partnerPerms) {
+            if (isPartner && partnerPerms?.shareCyclePhase != true &&
+                (partnerPerms?.shareSymptomsMoods == true || partnerPerms?.shareSexualActivity == true)
+            ) {
+                entries.filter { hasPermittedPartnerContent(it, partnerPerms) }
+                    .sortedByDescending { it.date }
+            } else {
+                emptyList()
             }
         }
 
@@ -396,8 +408,7 @@ fun CalendarScreen(
             )
         }
 
-        // ADD THIS LINE RIGHT AFTER THE GRID
-        CalendarLegend()
+        CalendarLegend(isPartner = isPartner, partnerPerms = partnerPerms)
         
         Spacer(modifier = Modifier.height(16.dp))
         
@@ -423,7 +434,10 @@ fun CalendarScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             if (selectedDate != null) {
-                val displayEntries = entries.filter { it.date == selectedDate.toString() }
+                val displayEntries = entries.filter { entry ->
+                    entry.date == selectedDate.toString() &&
+                        (!isPartner || hasPermittedPartnerContent(entry, partnerPerms))
+                }
                 items(displayEntries) { entry ->
                     HistoryItem(
                         entry = entry,
@@ -495,6 +509,21 @@ fun CalendarScreen(
                         }
                     }
                 } // End of if (!isPartner)
+            } else if (isPartner && partnerPerms?.shareCyclePhase != true) {
+                items(dayLevelSharedEntries) { entry ->
+                    HistoryItem(
+                        entry = entry,
+                        isPartner = true,
+                        partnerPerms = partnerPerms,
+                        onEdit = {},
+                        onDelete = {}
+                    )
+                }
+                if (dayLevelSharedEntries.isEmpty()) {
+                    item {
+                        Text("No shared logs found.", color = Color.Gray, modifier = Modifier.padding(16.dp))
+                    }
+                }
             } else {
                 items(groups) { group ->
                     HistoryGroupItem(
@@ -523,12 +552,28 @@ fun CalendarScreen(
                 }
                 if (groups.isEmpty()) {
                     item {
-                        Text("No period logs found.", color = Color.Gray, modifier = Modifier.padding(16.dp))
+                        Text(
+                            if (isPartner) "No shared logs found." else "No period logs found.",
+                            color = Color.Gray,
+                            modifier = Modifier.padding(16.dp)
+                        )
                     }
                 }
             }
         }
     }
+}
+
+private fun hasPermittedPartnerContent(entry: CycleEntry, perms: PartnerPermissions?): Boolean {
+    if (perms == null) return false
+    val hasPeriod = perms.shareCyclePhase && (entry.intensity ?: 0) > 0
+    val hasSymptomsOrNotes = perms.shareSymptomsMoods && (
+        !entry.notes.isNullOrBlank() ||
+        !entry.symptoms.isNullOrBlank() ||
+        (entry.painLevel ?: 0) > 0
+    )
+    val hasSexual = perms.shareSexualActivity && !entry.sexualRelations.isNullOrBlank()
+    return hasPeriod || hasSymptomsOrNotes || hasSexual
 }
 
 data class PeriodGroup(
@@ -552,11 +597,10 @@ fun groupPeriodEntries(entries: List<CycleEntry>, includeZeroFlow: Boolean = fal
         if (intensity > 0) {
             bleedingEntries.add(Pair(date, entry))
         } else if (includeZeroFlow && (
-            entry.intensity == 0 ||
-            !entry.symptoms.isNullOrEmpty() ||
+            !entry.symptoms.isNullOrBlank() ||
             (entry.painLevel ?: 0) > 0 ||
-            !entry.notes.isNullOrEmpty() ||
-            !entry.sexualRelations.isNullOrEmpty()
+            !entry.notes.isNullOrBlank() ||
+            !entry.sexualRelations.isNullOrBlank()
         )) {
             zeroFlowEntries.add(Pair(date, entry))
         }
@@ -666,8 +710,10 @@ fun HistoryGroupItem(
     onEditDay: (CycleEntry) -> Unit = {}
 ) {
     val periodColor = LocalAppColors.current.primary
+    val showPeriodDates = !isPartner || (partnerPerms?.shareCyclePhase == true)
     val showIntensity = !isPartner || (partnerPerms?.shareFlowIntensity == true)
     val showNotes = !isPartner || (partnerPerms?.shareSymptomsMoods == true)
+    val showSexual = !isPartner || (partnerPerms?.shareSexualActivity == true)
     var expanded by remember { mutableStateOf(false) }
     val hasMultipleDays = group.dailyEntries.size > 1
     val isZeroFlow = group.maxIntensity == 0
@@ -703,7 +749,7 @@ fun HistoryGroupItem(
                 Spacer(Modifier.width(16.dp))
                 
                 Column(modifier = Modifier.weight(1f)) {
-                    val dateStr = if (!showIntensity && !isZeroFlow) {
+                    val dateStr = if (!showPeriodDates && !isZeroFlow) {
                         "Period Logged (Dates Redacted)"
                     } else if (group.startDate == group.endDate) {
                         group.startDate.toHumanReadable()
@@ -712,18 +758,22 @@ fun HistoryGroupItem(
                     }
                     Text(dateStr, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
                     
-                    val intensityPart = if (showIntensity) {
-                        if (isZeroFlow) {
-                            "Flow: 0 · ${AppStrings.get("flow_0")}"
-                        } else {
-                            "Intensity: ${group.maxIntensity}"
-                        }
-                    } else ""
+                    val intensityPart = when {
+                        showIntensity && isZeroFlow -> "Flow: 0 · ${AppStrings.get("flow_0")}"
+                        showIntensity -> "Intensity: ${group.maxIntensity}"
+                        showPeriodDates && !isZeroFlow -> "Period logged"
+                        else -> ""
+                    }
                     val painVal = group.maxPainLevel
-                    val painPart = if (showNotes && painVal != null) " | Pain: ${if (painVal == 0) "0/10 (No pain)" else "$painVal/10"}" else ""
-                    val sympPart = if (showNotes && group.symptoms.isNotEmpty()) "\nSymptoms: ${group.symptoms.joinToString(", ")}" else ""
-                    val notesPart = if (showNotes && group.notes.isNotBlank()) "\n${group.notes}" else ""
-                    val fullNotes = "$intensityPart$painPart$sympPart$notesPart".trimStart(' ', '|', '\n')
+                    val painPart = if (showNotes && painVal != null) "Pain: ${if (painVal == 0) "0/10 (No pain)" else "$painVal/10"}" else ""
+                    val sexualValues = if (showSexual) {
+                        group.dailyEntries.mapNotNull { it.sexualRelations?.takeIf { s -> s.isNotBlank() }?.replaceFirstChar { c -> c.uppercase() } }.distinct()
+                    } else emptyList()
+                    val relPart = if (sexualValues.isNotEmpty()) "Activity: ${sexualValues.joinToString(", ")}" else ""
+                    val topRow = listOf(intensityPart, painPart, relPart).filter { it.isNotBlank() }.joinToString(" | ")
+                    val sympPart = if (showNotes && group.symptoms.isNotEmpty()) "Symptoms: ${group.symptoms.joinToString(", ")}" else ""
+                    val notesPart = if (showNotes && group.notes.isNotBlank()) group.notes else ""
+                    val fullNotes = listOf(topRow, sympPart, notesPart).filter { it.isNotBlank() }.joinToString("\n")
                     if (fullNotes.isNotBlank()) {
                         Text(fullNotes, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                     }
@@ -777,18 +827,24 @@ fun HistoryGroupItem(
                             )
                             Spacer(Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                val dayDateText = if (!showIntensity && !isDayZeroFlow) "Day ${index + 1} (Date Redacted)" else kotlinx.datetime.LocalDate.parse(dayEntry.date).toHumanReadable()
+                                val dayDateText = if (!showPeriodDates && !isDayZeroFlow) "Day ${index + 1} (Date Redacted)" else kotlinx.datetime.LocalDate.parse(dayEntry.date).toHumanReadable()
                                 Text("Day ${index + 1}: $dayDateText", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold))
                                 
-                                val intStr = if (showIntensity) {
-                                    val intVal = dayEntry.intensity ?: 0
-                                    if (intVal > 0) "Flow: $intVal" else "Flow: 0 · ${AppStrings.get("flow_0")}"
-                                } else ""
+                                val intVal = dayEntry.intensity ?: 0
+                                val intStr = when {
+                                    showIntensity && intVal > 0 -> "Flow: $intVal"
+                                    showIntensity -> "Flow: 0 · ${AppStrings.get("flow_0")}"
+                                    showPeriodDates && intVal > 0 -> "Period logged"
+                                    else -> ""
+                                }
                                 val pVal = dayEntry.painLevel
                                 val painStr = if (showNotes && pVal != null) "Pain: ${if (pVal == 0) "0/10 (No pain)" else "$pVal/10"}" else ""
+                                val relStr = if (showSexual && !dayEntry.sexualRelations.isNullOrBlank()) {
+                                    "Activity: ${dayEntry.sexualRelations.replaceFirstChar { it.uppercase() }}"
+                                } else ""
                                 val sympStr = if (showNotes && !dayEntry.symptoms.isNullOrBlank()) "Symptoms: ${dayEntry.symptoms?.replace(",", ", ")}" else ""
                                 
-                                val subDetails = listOf(intStr, painStr, sympStr).filter { it.isNotBlank() }.joinToString(" | ")
+                                val subDetails = listOf(intStr, painStr, relStr, sympStr).filter { it.isNotBlank() }.joinToString(" | ")
                                 if (subDetails.isNotBlank()) {
                                     Text(subDetails, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                                 } else {
@@ -811,11 +867,12 @@ fun HistoryGroupItem(
 @Composable
 fun HistoryItem(entry: CycleEntry, isPartner: Boolean = false, partnerPerms: PartnerPermissions? = null, onEdit: () -> Unit, onDelete: () -> Unit) {
     val periodColor = LocalAppColors.current.primary
+    val showPeriodDates = !isPartner || (partnerPerms?.shareCyclePhase == true)
     val showIntensity = !isPartner || (partnerPerms?.shareFlowIntensity == true)
     val showNotes = !isPartner || (partnerPerms?.shareSymptomsMoods == true)
     val showSexual = !isPartner || (partnerPerms?.shareSexualActivity == true)
     val isZeroFlow = (entry.intensity ?: 0) == 0
-    val isPeriodEntry = showIntensity && !isZeroFlow
+    val isPeriodEntry = showPeriodDates && !isZeroFlow
     
     Card(
         modifier = Modifier.fillMaxWidth().then(
@@ -851,10 +908,13 @@ fun HistoryItem(entry: CycleEntry, isPartner: Boolean = false, partnerPerms: Par
                 val notesStr = if (showNotes) (entry.notes ?: "") else ""
                 val sympStr = if (showNotes && !entry.symptoms.isNullOrBlank()) "Symptoms: ${entry.symptoms?.replace(",", ", ")}" else ""
                 val rel = if (showSexual) entry.sexualRelations else null
-                val intensityPart = if (showIntensity) {
-                    val intVal = entry.intensity ?: 0
-                    if (intVal > 0) "Intensity: $intVal" else "Flow: 0 · ${AppStrings.get("flow_0")}"
-                } else ""
+                val intVal = entry.intensity ?: 0
+                val intensityPart = when {
+                    showIntensity && intVal > 0 -> "Intensity: $intVal"
+                    showIntensity && showPeriodDates -> "Flow: 0 · ${AppStrings.get("flow_0")}"
+                    showPeriodDates && intVal > 0 -> "Period logged"
+                    else -> ""
+                }
                 val painVal = entry.painLevel
                 val painPart = if (showNotes && painVal != null) "Pain: ${if (painVal == 0) "0/10 (No pain)" else "$painVal/10"}" else ""
                 val relPart = if (!rel.isNullOrBlank()) "Activity: ${rel.replaceFirstChar { it.uppercase() }}" else ""
@@ -891,10 +951,16 @@ fun HistoryItem(entry: CycleEntry, isPartner: Boolean = false, partnerPerms: Par
 }
 
 @Composable
-fun CalendarLegend() {
+fun CalendarLegend(
+    isPartner: Boolean = false,
+    partnerPerms: PartnerPermissions? = null
+) {
     val appColors = LocalAppColors.current
     val PeriodColor = appColors.primaryVariant
     val FertileColor = appColors.secondaryVariant
+    val showCyclePhase = !isPartner || (partnerPerms?.shareCyclePhase == true)
+    val showSymptoms = !isPartner || (partnerPerms?.shareSymptomsMoods == true)
+    val showSexual = !isPartner || (partnerPerms?.shareSexualActivity == true)
 
     FlowRow(
         modifier = Modifier
@@ -903,53 +969,59 @@ fun CalendarLegend() {
         horizontalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterHorizontally),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // 1. Period Indicator
-        LegendItem(
-            text = "Period",
-            iconModifier = Modifier.background(PeriodColor, CircleShape)
-        )
+        if (showCyclePhase) {
+            // 1. Period Indicator
+            LegendItem(
+                text = "Period",
+                iconModifier = Modifier.background(PeriodColor, CircleShape)
+            )
 
-        // 2. Predicted Indicator (Dotted)
-        LegendItem(
-            text = "Predicted",
-            iconModifier = Modifier.drawBehind {
-                drawCircle(
-                    color = PeriodColor,
-                    style = Stroke(
-                        width = 1.5.dp.toPx(),
-                        pathEffect = PathEffect.dashPathEffect(
-                            intervals = floatArrayOf(6f, 6f),
-                            phase = 0f
+            // 2. Predicted Indicator (Dotted)
+            LegendItem(
+                text = "Predicted",
+                iconModifier = Modifier.drawBehind {
+                    drawCircle(
+                        color = PeriodColor,
+                        style = Stroke(
+                            width = 1.5.dp.toPx(),
+                            pathEffect = PathEffect.dashPathEffect(
+                                intervals = floatArrayOf(6f, 6f),
+                                phase = 0f
+                            )
                         )
                     )
-                )
-            }
-        )
+                }
+            )
 
-        // 3. Fertile Indicator
-        LegendItem(
-            text = "Fertile",
-            iconModifier = Modifier.background(FertileColor, CircleShape)
-        )
+            // 3. Fertile Indicator
+            LegendItem(
+                text = "Fertile",
+                iconModifier = Modifier.background(FertileColor, CircleShape)
+            )
+        }
 
-        // 4. 0 Flow / Symptoms
-        LegendItem(
-            text = AppStrings.get("legend_no_flow"),
-            iconModifier = Modifier.border(1.5.dp, PeriodColor.copy(alpha = 0.7f), CircleShape)
-        )
+        if (showSymptoms) {
+            // 4. 0 Flow / Symptoms
+            LegendItem(
+                text = AppStrings.get("legend_no_flow"),
+                iconModifier = Modifier.border(1.5.dp, PeriodColor.copy(alpha = 0.7f), CircleShape)
+            )
+        }
 
-        // 5. Intimacy
-        LegendItem(
-            text = AppStrings.get("legend_intimacy"),
-            icon = {
-                Icon(
-                    imageVector = Icons.Default.Favorite,
-                    contentDescription = null,
-                    tint = Color(0xFFE57373),
-                    modifier = Modifier.size(12.dp)
-                )
-            }
-        )
+        if (showSexual) {
+            // 5. Intimacy
+            LegendItem(
+                text = AppStrings.get("legend_intimacy"),
+                icon = {
+                    Icon(
+                        imageVector = Icons.Default.Favorite,
+                        contentDescription = null,
+                        tint = Color(0xFFE57373),
+                        modifier = Modifier.size(12.dp)
+                    )
+                }
+            )
+        }
 
         // 6. Today Indicator
         LegendItem(
