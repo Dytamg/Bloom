@@ -5,8 +5,8 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 
-actual class NotificationScheduler(private val context: Context) {
-    actual fun scheduleNotification(
+actual class NotificationScheduler(private val context: Context) : NotificationScheduling {
+    actual override fun scheduleNotification(
         id: Int,
         title: String,
         body: String,
@@ -17,12 +17,7 @@ actual class NotificationScheduler(private val context: Context) {
             putExtra("notification_id", id)
             putExtra("notification_title", title)
             putExtra("notification_body", body)
-            val repeatIntervalMs = when {
-                title.contains("Daily", ignoreCase = true) || body.contains("Daily", ignoreCase = true) || body.contains("pill", ignoreCase = true) -> 24L * 60 * 60 * 1000L
-                title.contains("Weekly", ignoreCase = true) || body.contains("Weekly", ignoreCase = true) || body.contains("patch", ignoreCase = true) -> 7L * 24 * 60 * 60 * 1000L
-                title.contains("Monthly", ignoreCase = true) || body.contains("Monthly", ignoreCase = true) || body.contains("strings", ignoreCase = true) || body.contains("check-in", ignoreCase = true) -> 30L * 24 * 60 * 60 * 1000L
-                else -> 0L
-            }
+            val repeatIntervalMs = repeatIntervalMsFor(title, body)
             if (repeatIntervalMs > 0L) {
                 putExtra("REPEAT_INTERVAL_MS", repeatIntervalMs)
             }
@@ -68,7 +63,7 @@ actual class NotificationScheduler(private val context: Context) {
         }
     }
 
-    actual fun cancelNotification(id: Int) {
+    actual override fun cancelNotification(id: Int) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
         val intent = Intent(context, NotificationReceiver::class.java)
         val pendingIntent = PendingIntent.getBroadcast(

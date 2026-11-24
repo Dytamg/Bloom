@@ -1,7 +1,7 @@
 package com.novarytm.notifications
 
-actual class NotificationScheduler {
-    actual fun scheduleNotification(
+actual class NotificationScheduler : NotificationScheduling {
+    actual override fun scheduleNotification(
         id: Int,
         title: String,
         body: String,
@@ -11,7 +11,7 @@ actual class NotificationScheduler {
         // For this demo, we leave it as a stub
     }
 
-    actual fun cancelNotification(id: Int) {
+    actual override fun cancelNotification(id: Int) {
         // Stub for iOS
     }
 }

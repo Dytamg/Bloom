@@ -51,7 +51,9 @@ shared/src/androidMain/jniLibs/
 
 # Secrets and local config
 .env
+.android/
 local.properties
+keystore.properties
 secrets.xml
 google-services.json
 credentials.json

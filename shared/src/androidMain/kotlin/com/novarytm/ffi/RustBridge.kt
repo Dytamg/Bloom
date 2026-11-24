@@ -80,10 +80,16 @@ actual class RustBridge {
     }
 
     actual fun deriveKey(pin: ByteArray, salt: ByteArray): ByteArray {
-        return runCatching { derive_key(pin, salt) }.getOrElse {
+        val key = runCatching { derive_key(pin, salt) }.getOrElse {
             android.util.Log.e("RustBridge", "Cryptographic key derivation failed", it)
-            throw IllegalStateException("Cryptographic engine failed", it)
+            throw IllegalStateException("Native key derivation failed", it)
         }
+        if (key.size < 32) {
+            key.fill(0)
+            android.util.Log.e("RustBridge", "Native key derivation returned insufficient length: ${key.size}")
+            throw IllegalStateException("Native key derivation failed")
+        }
+        return key
     }
 
     fun deriveKey(pin: String, salt: ByteArray): ByteArray {

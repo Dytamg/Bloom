@@ -14,7 +14,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 
 @Composable
@@ -53,11 +53,17 @@ fun CyclePhaseVisualizer(phase: String, currentDay: Int, totalDays: Int) {
         label = "DotBreathAlpha"
     )
 
-    // Harmonic 4-phase color palette
+    // Harmonic 4-phase arc color palette
     val menstrualColor = Color(0xFFD48C95)   // Gentle Rose / Coral (Days 1–5)
     val follicularColor = Color(0xFFE8A598)  // Warm Peach / Apricot (Days 6 to Fertile Start)
     val fertileColor = Color(0xFF88BC8F)     // Soft Sage / Mint Green (Fertile Window / Ovulation)
     val lutealColor = Color(0xFFB5838D)      // Delicate Lavender / Mauve (Post-ovulation to cycle end)
+
+    // WCAG AA (>= 4.5:1) high-contrast text palette for phase subtitle on light backgrounds
+    val menstrualTextColor = Color(0xFF8C3B47)
+    val follicularTextColor = Color(0xFF8A4A3B)
+    val fertileTextColor = Color(0xFF2E6B38)
+    val lutealTextColor = Color(0xFF6E3F4B)
 
     val safeTotal = kotlin.math.max(21, totalDays).toFloat()
     val ovulationDay = kotlin.math.max(7f, safeTotal - 14f)
@@ -65,17 +71,17 @@ fun CyclePhaseVisualizer(phase: String, currentDay: Int, totalDays: Int) {
     val fertileStart = kotlin.math.max(menstrualEnd, ovulationDay - 4f)
     val fertileEnd = kotlin.math.min(safeTotal, ovulationDay + 2f)
 
-    // Dynamic active phase color resolution
-    val activePhaseColor = when {
-        phase.contains("Menstrual", ignoreCase = true) || phase.contains("Period", ignoreCase = true) -> menstrualColor
-        phase.contains("Follicular", ignoreCase = true) -> follicularColor
-        phase.contains("Ovulat", ignoreCase = true) || phase.contains("Fertil", ignoreCase = true) -> fertileColor
-        phase.contains("Luteal", ignoreCase = true) -> lutealColor
-        currentDay in 1..menstrualEnd.toInt() -> menstrualColor
-        currentDay <= fertileStart.toInt() -> follicularColor
-        currentDay <= fertileEnd.toInt() -> fertileColor
-        currentDay > fertileEnd.toInt() && currentDay <= safeTotal -> lutealColor
-        else -> menstrualColor
+    // Dynamic active phase color & WCAG AA subtitle color resolution
+    val (activePhaseColor, activePhaseTextColor) = when {
+        phase.contains("Menstrual", ignoreCase = true) || phase.contains("Period", ignoreCase = true) -> menstrualColor to menstrualTextColor
+        phase.contains("Follicular", ignoreCase = true) -> follicularColor to follicularTextColor
+        phase.contains("Ovulat", ignoreCase = true) || phase.contains("Fertil", ignoreCase = true) -> fertileColor to fertileTextColor
+        phase.contains("Luteal", ignoreCase = true) -> lutealColor to lutealTextColor
+        currentDay in 1..menstrualEnd.toInt() -> menstrualColor to menstrualTextColor
+        currentDay <= fertileStart.toInt() -> follicularColor to follicularTextColor
+        currentDay <= fertileEnd.toInt() -> fertileColor to fertileTextColor
+        currentDay > fertileEnd.toInt() && currentDay <= safeTotal -> lutealColor to lutealTextColor
+        else -> menstrualColor to menstrualTextColor
     }
 
     data class PhaseSegment(val color: Color, val startDay: Float, val endDay: Float)
@@ -87,13 +93,20 @@ fun CyclePhaseVisualizer(phase: String, currentDay: Int, totalDays: Int) {
             PhaseSegment(lutealColor, fertileEnd, safeTotal)
         )
     }
+    val boundaryDays = remember(menstrualEnd, fertileStart, fertileEnd) {
+        listOf(0f, menstrualEnd, fertileStart, fertileEnd).distinct()
+    }
 
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
             .size(224.dp)
-            .semantics(mergeDescendants = true) {
-                contentDescription = "Day $currentDay of $totalDays days, $phase"
+            .clearAndSetSemantics {
+                contentDescription = if (totalDays > 0) {
+                    "Day $currentDay of $totalDays days, $phase"
+                } else {
+                    "Day $currentDay, $phase"
+                }
             }
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
@@ -140,6 +153,32 @@ fun CyclePhaseVisualizer(phase: String, currentDay: Int, totalDays: Int) {
                             }
                         }
                     }
+                }
+
+                // 2b. Subtle non-color phase boundary tick marks between the 4 phase arcs
+                val trackRadius = size.minDimension / 2f
+                val innerTickRadius = trackRadius - strokeWidth * 0.7f
+                val outerTickRadius = trackRadius + strokeWidth * 0.7f
+                boundaryDays.forEach { boundaryDay ->
+                    val boundaryAngleRad = ((-90f + (boundaryDay / safeTotal) * 360f) * kotlin.math.PI / 180.0)
+                    val cosA = kotlin.math.cos(boundaryAngleRad).toFloat()
+                    val sinA = kotlin.math.sin(boundaryAngleRad).toFloat()
+                    val startPt = Offset(center.x + innerTickRadius * cosA, center.y + innerTickRadius * sinA)
+                    val endPt = Offset(center.x + outerTickRadius * cosA, center.y + outerTickRadius * sinA)
+                    drawLine(
+                        color = Color.White.copy(alpha = 0.9f),
+                        start = startPt,
+                        end = endPt,
+                        strokeWidth = 3.dp.toPx(),
+                        cap = StrokeCap.Round
+                    )
+                    drawLine(
+                        color = Color(0xFF3E3636).copy(alpha = 0.6f),
+                        start = startPt,
+                        end = endPt,
+                        strokeWidth = 1.5.dp.toPx(),
+                        cap = StrokeCap.Round
+                    )
                 }
             }
 
@@ -194,12 +233,12 @@ fun CyclePhaseVisualizer(phase: String, currentDay: Int, totalDays: Int) {
             Text(
                 text = "of $totalDays days",
                 style = MaterialTheme.typography.bodySmall,
-                color = Color.Gray
+                color = Color(0xFF5C5C5C)
             )
             Text(
                 text = phase,
-                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
-                color = activePhaseColor,
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                color = activePhaseTextColor,
                 modifier = Modifier.padding(top = 4.dp)
             )
         }

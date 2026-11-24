@@ -58,7 +58,8 @@ fun MainDashboard(
     onSettingsClick: () -> Unit,
     onPairClick: () -> Unit,
     currentThemeName: String,
-    onThemeChange: (String) -> Unit
+    onThemeChange: (String) -> Unit,
+    notificationScheduler: com.novarytm.notifications.NotificationScheduler? = null
 ) {
     val analysis by produceState(
         initialValue = com.novarytm.tracker.CycleAnalysis(28, false),
@@ -180,6 +181,8 @@ fun MainDashboard(
             }
         }
 
+        val isAwaitingPeriod = !isPartnerView && latestCycleStartDate == null && entries.isNotEmpty()
+
         // Cycle Visualizer
         Box(contentAlignment = Alignment.Center) {
             if (canShowPhase && currentPhase == "Loading") {
@@ -196,7 +199,6 @@ fun MainDashboard(
                     totalDays = avgLength
                 )
             } else {
-                val isAwaitingPeriod = !isPartnerView && latestCycleStartDate == null && entries.isNotEmpty()
                 Box(
                     modifier = Modifier.size(240.dp).clip(CircleShape).background(Color(0xFFF3F4F6)).padding(24.dp),
                     contentAlignment = Alignment.Center
@@ -262,6 +264,7 @@ fun MainDashboard(
                     val msg = when {
                         !canShowPhase -> "Predictions hidden by partner"
                         entries.isEmpty() -> if (isPartnerView) "Waiting for partner data" else "Log symptoms to view predictions"
+                        isAwaitingPeriod -> "Log Flow 1–5 to calculate cycle"
                         else -> "Predictions not shared"
                     }
                     Text(msg, style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold))
@@ -313,6 +316,9 @@ fun MainDashboard(
                         if (!isPartnerView) {
                             IconButton(onClick = {
                                 queries.deleteReminder(reminder.id)
+                                notificationScheduler?.cancelNotification(
+                                    com.novarytm.notifications.reminderNotificationId(reminder.type, reminder.frequency)
+                                )
                             }) {
                                 Icon(Icons.Default.Delete, contentDescription = "Delete Reminder", tint = Color.Gray)
                             }
@@ -333,7 +339,7 @@ fun MainDashboard(
             ) {
                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("Log Symptoms", style = MaterialTheme.typography.titleMedium)
+                Text("+ Log Period / Symptoms", style = MaterialTheme.typography.titleMedium)
             }
         }
 

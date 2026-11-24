@@ -27,11 +27,38 @@ interface SyncUploadStateStore {
     fun setPendingSyncUpload(pending: Boolean)
 }
 
-internal class SecureStorageSyncStateStore(
+interface SyncKeyValueStore : SyncUploadStateStore {
+    fun getUserId(): String?
+    fun getTargetSyncId(): String?
+    fun saveTargetSyncId(id: String)
+    fun getPartnerEmail(): String?
+    fun getSyncSecretKey(): ByteArray?
+    fun saveSyncSecretKey(key: ByteArray)
+    fun getPrimarySyncFileId(): String?
+    fun savePrimarySyncFileId(fileId: String?)
+    fun getLastSyncTimestamp(): Long
+    fun saveLastSyncTimestamp(timestampMs: Long)
+    fun saveLastSuccessfulSyncWallclock(timestampMs: Long)
+    fun savePartnerPermissionsJson(json: String)
+}
+
+internal class SecureStorageSyncKeyValueStore(
     private val storage: SecureStorageManager
-) : SyncUploadStateStore {
+) : SyncKeyValueStore {
     override fun hasPendingSyncUpload(): Boolean = storage.hasPendingSyncUpload()
     override fun setPendingSyncUpload(pending: Boolean) = storage.setPendingSyncUpload(pending)
+    override fun getUserId(): String? = storage.getUserId()
+    override fun getTargetSyncId(): String? = storage.getTargetSyncId()
+    override fun saveTargetSyncId(id: String) = storage.saveTargetSyncId(id)
+    override fun getPartnerEmail(): String? = storage.getPartnerEmail()
+    override fun getSyncSecretKey(): ByteArray? = storage.getSyncSecretKey()
+    override fun saveSyncSecretKey(key: ByteArray) = storage.saveSyncSecretKey(key)
+    override fun getPrimarySyncFileId(): String? = storage.getPrimarySyncFileId()
+    override fun savePrimarySyncFileId(fileId: String?) = storage.savePrimarySyncFileId(fileId)
+    override fun getLastSyncTimestamp(): Long = storage.getLastSyncTimestamp()
+    override fun saveLastSyncTimestamp(timestampMs: Long) = storage.saveLastSyncTimestamp(timestampMs)
+    override fun saveLastSuccessfulSyncWallclock(timestampMs: Long) = storage.saveLastSuccessfulSyncWallclock(timestampMs)
+    override fun savePartnerPermissionsJson(json: String) = storage.savePartnerPermissionsJson(json)
 }
 
 internal class PendingSyncCoordinator(
@@ -50,16 +77,53 @@ internal class PendingSyncCoordinator(
     }
 }
 
+interface SyncCryptoBridge {
+    fun getPartnerPermissions(): PartnerPermissions
+    fun savePartnerPermissions(permissions: PartnerPermissions)
+    fun generateRandomKey(): ByteArray
+    fun encryptForSync(payloadJson: String, sharedKeyBase64: String): String
+    fun decryptFromSync(encryptedBase64: String, sharedKeyBase64: String): String
+}
+
+private class RustSyncCryptoBridge(
+    private val bridge: RustBridge
+) : SyncCryptoBridge {
+    override fun getPartnerPermissions(): PartnerPermissions = bridge.getPartnerPermissions()
+    override fun savePartnerPermissions(permissions: PartnerPermissions) = bridge.savePartnerPermissions(permissions)
+    override fun generateRandomKey(): ByteArray = bridge.generateRandomKey()
+    override fun encryptForSync(payloadJson: String, sharedKeyBase64: String): String =
+        bridge.encryptForSync(payloadJson, sharedKeyBase64)
+    override fun decryptFromSync(encryptedBase64: String, sharedKeyBase64: String): String =
+        bridge.decryptFromSync(encryptedBase64, sharedKeyBase64)
+}
+
 @OptIn(FlowPreview::class)
 class SyncManager(
     private val database: NovarytmDatabase,
-    private val rustBridge: RustBridge,
-    private val storage: SecureStorageManager,
-    private val googleDriveManager: GoogleDriveManager,
+    private val rustBridge: SyncCryptoBridge,
+    private val storage: SyncKeyValueStore,
+    private val googleDriveManager: DriveBlobClient,
     val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
     private val cycleTracker: CycleTracker? = null,
     private val backgroundSyncScheduler: SyncUploadScheduler? = null
 ) {
+    constructor(
+        database: NovarytmDatabase,
+        rustBridge: RustBridge,
+        storage: SecureStorageManager,
+        googleDriveManager: DriveBlobClient,
+        scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default),
+        cycleTracker: CycleTracker? = null,
+        backgroundSyncScheduler: SyncUploadScheduler? = null
+    ) : this(
+        database = database,
+        rustBridge = RustSyncCryptoBridge(rustBridge),
+        storage = SecureStorageSyncKeyValueStore(storage),
+        googleDriveManager = googleDriveManager,
+        scope = scope,
+        cycleTracker = cycleTracker,
+        backgroundSyncScheduler = backgroundSyncScheduler
+    )
     sealed interface UploadOutcome {
         data class Success(val fileId: String) : UploadOutcome
         data object NoOp : UploadOutcome
@@ -83,7 +147,7 @@ class SyncManager(
     private val syncAttemptTimestamps = mutableListOf<Long>()
     private val hasPendingChanges = MutableStateFlow(false)
     private val pendingSyncCoordinator = PendingSyncCoordinator(
-        stateStore = SecureStorageSyncStateStore(storage),
+        stateStore = storage,
         scheduler = backgroundSyncScheduler
     )
 
@@ -125,8 +189,7 @@ class SyncManager(
         _syncAuthRequired.value = false
     }
 
-    private fun checkRateLimit(): Boolean {
-        val now = Clock.System.now().toEpochMilliseconds()
+    internal fun checkRateLimit(now: Long = Clock.System.now().toEpochMilliseconds()): Boolean {
         syncAttemptTimestamps.removeAll { now - it > 60_000 }
         if (syncAttemptTimestamps.size >= 15) {
             return false
@@ -183,6 +246,11 @@ class SyncManager(
 
     suspend fun prepareAndUploadPayload(): String? = withContext(Dispatchers.IO) {
         uploadMutex.withLock {
+            if (!isOwnerMode()) {
+                hasPendingChanges.value = false
+                pendingSyncCoordinator.clearPendingAndCancel()
+                return@withContext null
+            }
             if (!checkRateLimit()) {
                 _syncWarning.value = "Rate limit reached. Please wait before syncing again."
                 return@withContext null
@@ -193,7 +261,11 @@ class SyncManager(
 
     suspend fun executeBackgroundUpload(): UploadOutcome = withContext(Dispatchers.IO) {
         uploadMutex.withLock {
-            executeUploadLocked()
+            val outcome = executeUploadLocked()
+            if (outcome is UploadOutcome.Success) {
+                storage.setPendingSyncUpload(false)
+            }
+            outcome
         }
     }
 
@@ -218,6 +290,13 @@ class SyncManager(
     }
 
     private suspend fun executeUploadLocked(): UploadOutcome {
+        // Asymmetric Partner Read-Only Guard: Partner mode must NEVER upload to Google Drive.
+        if (!isOwnerMode()) {
+            hasPendingChanges.value = false
+            pendingSyncCoordinator.clearPendingAndCancel()
+            return UploadOutcome.NoOp
+        }
+
         // Clear pending marker before reading DB so mutations during upload trigger another cycle,
         // while a manual upload cancels any redundant pending debounce emission.
         hasPendingChanges.value = false
@@ -225,23 +304,25 @@ class SyncManager(
         return try {
             val partnerEmail = storage.getPartnerEmail()?.trim()
             val encryptionKeyBytes = storage.getSyncSecretKey()
-            val hasPriorSyncState = encryptionKeyBytes != null ||
-                !partnerEmail.isNullOrBlank() ||
-                storage.getPrimarySyncFileId() != null ||
-                storage.getLastSyncTimestamp() > 0L ||
-                storage.getLastSuccessfulSyncWallclock() > 0L ||
-                storage.getPartnerPermissionsJson() != null
+            val hasPriorSync = !storage.getPrimarySyncFileId().isNullOrBlank() ||
+                storage.getLastSyncTimestamp() > 0L
 
             if (partnerEmail.isNullOrBlank()) {
                 encryptionKeyBytes?.fill(0)
-                if (hasPriorSyncState) {
+                if (hasPriorSync) {
                     _syncWarning.value = "Partner email missing after restore or unlink. Please enter your partner's email in Share Sync Code to resume syncing."
+                } else {
+                    pendingSyncCoordinator.clearPendingAndCancel()
                 }
                 return UploadOutcome.NoOp
             }
 
             if (encryptionKeyBytes == null) {
-                _syncWarning.value = "Sync secret key missing. Please regenerate a sync code in Share Sync Code to resume syncing."
+                if (hasPriorSync) {
+                    _syncWarning.value = "Sync secret key missing. Please regenerate a sync code in Share Sync Code to resume syncing."
+                } else {
+                    pendingSyncCoordinator.clearPendingAndCancel()
+                }
                 return UploadOutcome.NoOp
             }
 
@@ -682,6 +763,7 @@ class SyncManager(
 
     suspend fun revokeAndRegenerate(): Boolean = withContext(Dispatchers.IO) {
         uploadMutex.withLock {
+            if (!isOwnerMode()) return@withLock false
             try {
                 // 1. Delete the existing file on Google Drive
                 val deleted = googleDriveManager.deleteSyncBlob()

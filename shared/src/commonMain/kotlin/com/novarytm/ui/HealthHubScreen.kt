@@ -1,6 +1,14 @@
 package com.novarytm.ui
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -33,6 +41,7 @@ import app.cash.sqldelight.coroutines.mapToList
 import app.cash.sqldelight.coroutines.mapToOneOrNull
 import com.novarytm.db.CycleQueries
 import com.novarytm.notifications.NotificationScheduler
+import com.novarytm.notifications.reminderNotificationId
 import com.novarytm.sync.PartnerPermissions
 import kotlin.time.Clock
 import kotlinx.coroutines.Dispatchers
@@ -109,24 +118,44 @@ fun HealthHubScreen(
                     modifier = Modifier.align(Alignment.Center)
                 )
             } else {
-                when (tabs[selectedTab]) {
-                    "Birth Control" -> {
-                        BirthControlTab(
-                            currentMethod = currentMethod,
-                            onMethodSelected = onMethodSelected,
-                            isPartner = isPartner,
-                            queries = queries,
-                            notificationScheduler = notificationScheduler,
-                            primaryColor = primaryColor
-                        )
-                    }
-                    "Pregnancy Tests" -> {
-                        PregnancyTestTab(
-                            isPartner = isPartner,
-                            queries = queries,
-                            notificationScheduler = notificationScheduler,
-                            primaryColor = primaryColor
-                        )
+                AnimatedContent(
+                    targetState = selectedTab,
+                    transitionSpec = {
+                        val animSpec = tween<androidx.compose.ui.unit.IntOffset>(durationMillis = 220, easing = FastOutSlowInEasing)
+                        val fadeSpec = tween<Float>(durationMillis = 220, easing = FastOutSlowInEasing)
+
+                        if (targetState > initialState) {
+                            (slideInHorizontally(animationSpec = animSpec) { it } + fadeIn(animationSpec = fadeSpec))
+                                .togetherWith(slideOutHorizontally(animationSpec = animSpec) { -it / 3 } + fadeOut(animationSpec = fadeSpec))
+                        } else if (targetState < initialState) {
+                            (slideInHorizontally(animationSpec = animSpec) { -it } + fadeIn(animationSpec = fadeSpec))
+                                .togetherWith(slideOutHorizontally(animationSpec = animSpec) { it / 3 } + fadeOut(animationSpec = fadeSpec))
+                        } else {
+                            fadeIn(animationSpec = fadeSpec).togetherWith(fadeOut(animationSpec = fadeSpec))
+                        }
+                    },
+                    label = "HealthHubTabSlideTransition",
+                    modifier = Modifier.fillMaxSize()
+                ) { targetTab ->
+                    when (tabs.getOrNull(targetTab)) {
+                        "Birth Control" -> {
+                            BirthControlTab(
+                                currentMethod = currentMethod,
+                                onMethodSelected = onMethodSelected,
+                                isPartner = isPartner,
+                                queries = queries,
+                                notificationScheduler = notificationScheduler,
+                                primaryColor = primaryColor
+                            )
+                        }
+                        "Pregnancy Tests" -> {
+                            PregnancyTestTab(
+                                isPartner = isPartner,
+                                queries = queries,
+                                notificationScheduler = notificationScheduler,
+                                primaryColor = primaryColor
+                            )
+                        }
                     }
                 }
             }
@@ -336,7 +365,12 @@ fun BirthControlTab(
                                     Text("${reminder.frequency} at ${reminder.timeOfDay ?: "N/A"}$dateStr", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                                 }
                                 if (!isPartner) {
-                                    IconButton(onClick = { queries.deleteReminder(reminder.id) }) {
+                                    IconButton(onClick = {
+                                        queries.deleteReminder(reminder.id)
+                                        notificationScheduler.cancelNotification(
+                                            reminderNotificationId(reminder.type, reminder.frequency)
+                                        )
+                                    }) {
                                         Icon(Icons.Default.Delete, contentDescription = "Delete Reminder", tint = Color.Gray)
                                     }
                                 }
@@ -584,7 +618,7 @@ fun QuizOverlay(onClose: () -> Unit, onComplete: (BCOption) -> Unit, primaryColo
     Dialog(onDismissRequest = onClose, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Box(modifier = Modifier.fillMaxSize().background(Color.White), contentAlignment = Alignment.Center) {
             IconButton(onClick = onClose, modifier = Modifier.align(Alignment.TopEnd).padding(16.dp).background(Color.LightGray.copy(alpha=0.2f), CircleShape)) {
-                Icon(Icons.Default.Close, contentDescription = null)
+                Icon(Icons.Default.Close, contentDescription = "Close")
             }
             
             Column(
@@ -945,7 +979,7 @@ fun ReminderSection(
                     when {
                         isPill -> {
                             queries.insertReminder("Pill", "Daily", selectedTimeStr, dateStr, true)
-                            notificationScheduler.scheduleNotification(101, "Bloom", "💊 Time for your pill", recurringDelay)
+                            notificationScheduler.scheduleNotification(reminderNotificationId("Pill", "Daily"), "Bloom", "💊 Time for your pill", recurringDelay)
                         }
                         isHormonalIUD -> {
                             val iudYears = when {
@@ -954,10 +988,11 @@ fun ReminderSection(
                                 else -> 5
                             }
                             val nextDate = selectedDate.plus(iudYears, DateTimeUnit.YEAR)
-                            queries.insertReminder("Hormonal IUD Replacement ($iudYears Years)", "Once", selectedTimeStr, nextDate.toString(), true)
+                            val replacementType = "Hormonal IUD Replacement ($iudYears Years)"
+                            queries.insertReminder(replacementType, "Once", selectedTimeStr, nextDate.toString(), true)
                             queries.insertReminder("IUD String Check", "Monthly", selectedTimeStr, dateStr, true)
-                            notificationScheduler.scheduleNotification(102, "Bloom", "🌸 Check your strings", recurringDelay)
-                            notificationScheduler.scheduleNotification(106, "Bloom", "🌸 Time for Hormonal IUD replacement ($iudYears Years)", delayFor(nextDate))
+                            notificationScheduler.scheduleNotification(reminderNotificationId("IUD String Check", "Monthly"), "Bloom", "🌸 Check your strings", recurringDelay)
+                            notificationScheduler.scheduleNotification(reminderNotificationId(replacementType, "Once"), "Bloom", "🌸 Time for Hormonal IUD replacement ($iudYears Years)", delayFor(nextDate))
                         }
                         isCopperIUD -> {
                             val iudYears = when {
@@ -967,29 +1002,30 @@ fun ReminderSection(
                                 else -> 10
                             }
                             val nextDate = selectedDate.plus(iudYears, DateTimeUnit.YEAR)
-                            queries.insertReminder("Copper IUD Replacement ($iudYears Years)", "Once", selectedTimeStr, nextDate.toString(), true)
+                            val replacementType = "Copper IUD Replacement ($iudYears Years)"
+                            queries.insertReminder(replacementType, "Once", selectedTimeStr, nextDate.toString(), true)
                             queries.insertReminder("IUD String Check", "Monthly", selectedTimeStr, dateStr, true)
-                            notificationScheduler.scheduleNotification(102, "Bloom", "🌸 Check your strings", recurringDelay)
-                            notificationScheduler.scheduleNotification(107, "Bloom", "🌸 Time for Copper IUD replacement ($iudYears Years)", delayFor(nextDate))
+                            notificationScheduler.scheduleNotification(reminderNotificationId("IUD String Check", "Monthly"), "Bloom", "🌸 Check your strings", recurringDelay)
+                            notificationScheduler.scheduleNotification(reminderNotificationId(replacementType, "Once"), "Bloom", "🌸 Time for Copper IUD replacement ($iudYears Years)", delayFor(nextDate))
                         }
                         isImplant -> {
                             val nextDate = selectedDate.plus(3, DateTimeUnit.YEAR)
                             queries.insertReminder("Arm Implant Replacement", "Once", selectedTimeStr, nextDate.toString(), true)
-                            notificationScheduler.scheduleNotification(103, "Bloom", "🌸 Time for implant replacement", delayFor(nextDate))
+                            notificationScheduler.scheduleNotification(reminderNotificationId("Arm Implant Replacement", "Once"), "Bloom", "🌸 Time for implant replacement", delayFor(nextDate))
                         }
                         isPatch -> {
                             queries.insertReminder("Contraceptive Patch", "Weekly (3 on, 1 off)", selectedTimeStr, dateStr, true)
-                            notificationScheduler.scheduleNotification(104, "Bloom", "🌸 Time to change your patch", recurringDelay)
+                            notificationScheduler.scheduleNotification(reminderNotificationId("Contraceptive Patch", "Weekly (3 on, 1 off)"), "Bloom", "🌸 Time to change your patch", recurringDelay)
                         }
                         isRing -> {
                             queries.insertReminder("Vaginal Ring (Remove)", "Every 3 Weeks", selectedTimeStr, selectedDate.plus(21, DateTimeUnit.DAY).toString(), true)
                             queries.insertReminder("Vaginal Ring (Insert)", "Every 4 Weeks", selectedTimeStr, selectedDate.plus(28, DateTimeUnit.DAY).toString(), true)
-                            notificationScheduler.scheduleNotification(105, "Bloom", "🌸 Time to change your ring", delayFor(selectedDate.plus(21, DateTimeUnit.DAY)))
+                            notificationScheduler.scheduleNotification(reminderNotificationId("Vaginal Ring (Remove)", "Every 3 Weeks"), "Bloom", "🌸 Time to change your ring", delayFor(selectedDate.plus(21, DateTimeUnit.DAY)))
                         }
                         isInjection -> {
                             val nextDate = selectedDate.plus(84, DateTimeUnit.DAY)
                             queries.insertReminder("Contraceptive Injection", "Every 12 Weeks", selectedTimeStr, nextDate.toString(), true)
-                            notificationScheduler.scheduleNotification(107, "Bloom", "🌸 Time for your next shot", delayFor(nextDate))
+                            notificationScheduler.scheduleNotification(reminderNotificationId("Contraceptive Injection", "Every 12 Weeks"), "Bloom", "🌸 Time for your next shot", delayFor(nextDate))
                         }
                     }
                     showSetup = false
@@ -1068,7 +1104,12 @@ fun PregnancyTestTab(
                                 Text("${reminder.frequency} at ${reminder.timeOfDay ?: "N/A"}$dateStr", style = MaterialTheme.typography.bodySmall, color = Color.Gray)
                             }
                             if (!isPartner) {
-                                IconButton(onClick = { queries.deleteReminder(reminder.id) }) {
+                                IconButton(onClick = {
+                                    queries.deleteReminder(reminder.id)
+                                    notificationScheduler.cancelNotification(
+                                        reminderNotificationId(reminder.type, reminder.frequency)
+                                    )
+                                }) {
                                     Icon(Icons.Default.Delete, contentDescription = "Delete Reminder", tint = Color.Gray)
                                 }
                             }
@@ -1298,7 +1339,7 @@ fun PregnancyTestTab(
                     }
                     val recurringDelay = (LocalDateTime(firstOccurrence, targetTime).toInstant(tz).toEpochMilliseconds() - now.toEpochMilliseconds()).coerceAtLeast(1000L)
                     
-                    notificationScheduler.scheduleNotification(108, "Bloom", "🌸 Time for a quick check-in", recurringDelay)
+                    notificationScheduler.scheduleNotification(reminderNotificationId("Pregnancy Test", "Monthly"), "Bloom", "🌸 Time for a quick check-in", recurringDelay)
                     showReminderDialog = false
                 }) { Text("Yes, Remind Me", color = primaryColor) }
             },

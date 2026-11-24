@@ -24,6 +24,10 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import com.novarytm.ffi.RustBridge
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @Composable
 fun CreatePinScreen(
@@ -34,8 +38,49 @@ fun CreatePinScreen(
     var firstEntryBytes by remember { mutableStateOf(ByteArray(0)) }
     var currentEntryBytes by remember { mutableStateOf(ByteArray(0)) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var isProcessing by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     
     val primaryColor = LocalAppColors.current.primary
+
+    DisposableEffect(Unit) {
+        onDispose {
+            currentEntryBytes.fill(0)
+            firstEntryBytes.fill(0)
+        }
+    }
+
+    val deriveAndComplete: () -> Unit = {
+        if (!isProcessing) {
+            isProcessing = true
+            val pinSnapshot = currentEntryBytes.copyOf()
+            scope.launch {
+                try {
+                    val (hash, masterKey, salt) = withContext(Dispatchers.Default) {
+                        val randomKey = rustBridge.generateRandomKey()
+                        val derivedSalt = randomKey.sliceArray(0 until 16)
+                        randomKey.fill(0)
+                        val pinHash = rustBridge.generatePinHash(pinSnapshot)
+                        val key = rustBridge.deriveKey(pinSnapshot, derivedSalt)
+                        Triple(pinHash, key, derivedSalt)
+                    }
+                    onPinCreated(hash, masterKey, salt)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    errorMessage = "Unable to secure PIN. Please try again."
+                    step = 0
+                } finally {
+                    pinSnapshot.fill(0)
+                    currentEntryBytes.fill(0)
+                    firstEntryBytes.fill(0)
+                    currentEntryBytes = ByteArray(0)
+                    firstEntryBytes = ByteArray(0)
+                    isProcessing = false
+                }
+            }
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -85,7 +130,10 @@ fun CreatePinScreen(
             }
         }
         
-        if (errorMessage != null) {
+        if (isProcessing) {
+            Spacer(modifier = Modifier.height(16.dp))
+            CircularProgressIndicator(color = primaryColor, modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
+        } else if (errorMessage != null) {
             Spacer(modifier = Modifier.height(16.dp))
             Text(errorMessage ?: "", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
         }
@@ -116,7 +164,7 @@ fun CreatePinScreen(
                                 .size(72.dp)
                                 .clip(CircleShape)
                                 .background(if (key == "OK") primaryColor else Color.White)
-                                .clickable {
+                                .clickable(enabled = !isProcessing) {
                                     errorMessage = null
                                     if (key == "del") {
                                         if (currentEntryBytes.isNotEmpty()) {
@@ -131,19 +179,7 @@ fun CreatePinScreen(
                                             step = 1
                                         } else {
                                             if (currentEntryBytes.contentEquals(firstEntryBytes)) {
-                                                val randomKey = rustBridge.generateRandomKey()
-                                                val salt = randomKey.sliceArray(0 until 16)
-                                                randomKey.fill(0)
-                                                try {
-                                                    val hash = rustBridge.generatePinHash(currentEntryBytes)
-                                                    val masterKey = rustBridge.deriveKey(currentEntryBytes, salt)
-                                                    onPinCreated(hash, masterKey, salt)
-                                                } finally {
-                                                    currentEntryBytes.fill(0)
-                                                    firstEntryBytes.fill(0)
-                                                    currentEntryBytes = ByteArray(0)
-                                                    firstEntryBytes = ByteArray(0)
-                                                }
+                                                deriveAndComplete()
                                             } else {
                                                 errorMessage = "PINs do not match"
                                                 currentEntryBytes.fill(0)
@@ -163,19 +199,7 @@ fun CreatePinScreen(
                                             currentEntryBytes = newArr
                                             if (step == 1 && currentEntryBytes.size == firstEntryBytes.size) {
                                                 if (currentEntryBytes.contentEquals(firstEntryBytes)) {
-                                                    val randomKey = rustBridge.generateRandomKey()
-                                                    val salt = randomKey.sliceArray(0 until 16)
-                                                    randomKey.fill(0)
-                                                    try {
-                                                        val hash = rustBridge.generatePinHash(currentEntryBytes)
-                                                        val masterKey = rustBridge.deriveKey(currentEntryBytes, salt)
-                                                        onPinCreated(hash, masterKey, salt)
-                                                    } finally {
-                                                        currentEntryBytes.fill(0)
-                                                        firstEntryBytes.fill(0)
-                                                        currentEntryBytes = ByteArray(0)
-                                                        firstEntryBytes = ByteArray(0)
-                                                    }
+                                                    deriveAndComplete()
                                                 } else {
                                                     errorMessage = "PINs do not match"
                                                     currentEntryBytes.fill(0)

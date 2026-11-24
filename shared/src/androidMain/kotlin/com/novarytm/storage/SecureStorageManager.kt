@@ -123,32 +123,27 @@ actual class SecureStorageManager(private val context: Context) {
         } catch (e: Exception) { null }
     }
 
-    // VULN-04 FIX: Master key is wrapped with hardware-backed Keystore AES-GCM key
+    // VULN-04 FIX: Master key is wrapped with hardware-backed Keystore AES-GCM key (fail-closed)
     actual fun saveMasterKey(key: ByteArray) {
-
         val wrapper = keystoreWrapperKey
-        if (wrapper != null) {
-            try {
-                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-                cipher.init(Cipher.ENCRYPT_MODE, wrapper)
-                val iv = cipher.iv  // 12-byte GCM IV
-                val encrypted = cipher.doFinal(key)
-                val combined = iv + encrypted  // [12-byte IV | ciphertext+tag]
-                // H-6: Atomic SharedPreferences edit
-                sharedPreferences.edit()
-                    .putString("master_key_wrapped", android.util.Base64.encodeToString(combined, android.util.Base64.DEFAULT))
-                    .remove("master_key")
-                    .commit()
-                return
-            } catch (e: Exception) {
-                android.util.Log.e("SecureStorage", "Keystore hardware encryption failed. Refusing to downgrade.", e)
-                throw IllegalStateException("Failed to wrap master key securely with hardware keystore", e)
-            }
+            ?: throw IllegalStateException("Android Keystore unavailable for secret wrapping")
+        try {
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE, wrapper)
+            val iv = cipher.iv  // 12-byte GCM IV
+            val encrypted = cipher.doFinal(key)
+            val combined = iv + encrypted  // [12-byte IV | ciphertext+tag]
+            // H-6: Atomic SharedPreferences edit
+            sharedPreferences.edit()
+                .putString("master_key_wrapped", android.util.Base64.encodeToString(combined, android.util.Base64.DEFAULT))
+                .remove("master_key")
+                .commit()
+        } catch (e: IllegalStateException) {
+            throw e
+        } catch (e: Exception) {
+            android.util.Log.e("SecureStorage", "Keystore hardware encryption failed. Refusing to downgrade.", e)
+            throw IllegalStateException("Failed to wrap master key securely with hardware keystore", e)
         }
-        sharedPreferences.edit()
-            .putString("master_key", android.util.Base64.encodeToString(key, android.util.Base64.DEFAULT))
-            .remove("master_key_wrapped")
-            .commit()
     }
 
     // VULN-04 FIX: Unwrap master key using hardware-backed Keystore AES-GCM key
@@ -210,27 +205,23 @@ actual class SecureStorageManager(private val context: Context) {
 
     actual fun saveSyncSecretKey(key: ByteArray) {
         val wrapper = keystoreWrapperKey
-        if (wrapper != null) {
-            try {
-                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-                cipher.init(Cipher.ENCRYPT_MODE, wrapper)
-                val iv = cipher.iv
-                val encrypted = cipher.doFinal(key)
-                val combined = iv + encrypted
-                sharedPreferences.edit()
-                    .putString("sync_secret_key_wrapped", android.util.Base64.encodeToString(combined, android.util.Base64.DEFAULT))
-                    .remove("sync_secret_key")
-                    .commit()
-                return
-            } catch (e: Exception) {
-                android.util.Log.e("SecureStorage", "Keystore hardware encryption failed for sync key. Refusing to downgrade.", e)
-                throw IllegalStateException("Failed to wrap sync key securely with hardware keystore", e)
-            }
+            ?: throw IllegalStateException("Android Keystore unavailable for secret wrapping")
+        try {
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE, wrapper)
+            val iv = cipher.iv
+            val encrypted = cipher.doFinal(key)
+            val combined = iv + encrypted
+            sharedPreferences.edit()
+                .putString("sync_secret_key_wrapped", android.util.Base64.encodeToString(combined, android.util.Base64.DEFAULT))
+                .remove("sync_secret_key")
+                .commit()
+        } catch (e: IllegalStateException) {
+            throw e
+        } catch (e: Exception) {
+            android.util.Log.e("SecureStorage", "Keystore hardware encryption failed for sync key. Refusing to downgrade.", e)
+            throw IllegalStateException("Failed to wrap sync key securely with hardware keystore", e)
         }
-        sharedPreferences.edit()
-            .putString("sync_secret_key", android.util.Base64.encodeToString(key, android.util.Base64.DEFAULT))
-            .remove("sync_secret_key_wrapped")
-            .commit()
     }
 
     actual fun getSyncSecretKey(): ByteArray? {
@@ -390,6 +381,62 @@ actual class SecureStorageManager(private val context: Context) {
             .putInt("failed_pin_attempts", 0)
             .putLong("pin_lockout_until", 0L)
             .putLong("pin_lockout_elapsed", 0L)
+            .commit()
+    }
+
+    actual fun getSyncCodeFailedAttempts(): Int {
+        return sharedPreferences.getInt("sync_code_failed_attempts", 0)
+    }
+
+    private fun resolveSyncCodeLockoutUntilMs(nowWall: Long, nowElapsed: Long): Long {
+        val elapsedUntil = sharedPreferences.getLong("sync_code_lockout_elapsed", 0L)
+        if (elapsedUntil > nowElapsed) {
+            val remainingMs = (elapsedUntil - nowElapsed).coerceAtMost(PairingRateLimiter.LOCKOUT_300S_MS)
+            return nowWall + remainingMs
+        }
+        val wallUntil = sharedPreferences.getLong("sync_code_lockout_until", 0L)
+        if (wallUntil > nowWall) {
+            val remainingMs = (wallUntil - nowWall).coerceAtMost(PairingRateLimiter.LOCKOUT_300S_MS)
+            return nowWall + remainingMs
+        }
+        return 0L
+    }
+
+    actual fun recordSyncCodeFailedAttempt(): Long {
+        val attempts = (getSyncCodeFailedAttempts() + 1).coerceAtLeast(1)
+        val nowWall = System.currentTimeMillis()
+        val nowElapsed = android.os.SystemClock.elapsedRealtime()
+        val previousUntilMs = resolveSyncCodeLockoutUntilMs(nowWall, nowElapsed)
+        val lockUntilWallMs = PairingRateLimiter.computeLockoutUntilMs(
+            failedAttempts = attempts,
+            nowMs = nowWall,
+            previousLockoutUntilMs = previousUntilMs
+        )
+        val editor = sharedPreferences.edit().putInt("sync_code_failed_attempts", attempts)
+        if (lockUntilWallMs > nowWall) {
+            val durationMs = (lockUntilWallMs - nowWall).coerceIn(0L, PairingRateLimiter.LOCKOUT_300S_MS)
+            editor.putLong("sync_code_lockout_until", lockUntilWallMs)
+                .putLong("sync_code_lockout_elapsed", nowElapsed + durationMs)
+        } else {
+            editor.putLong("sync_code_lockout_until", 0L)
+                .putLong("sync_code_lockout_elapsed", 0L)
+        }
+        editor.commit()
+        return lockUntilWallMs
+    }
+
+    actual fun getSyncCodeLockoutRemainingSeconds(): Long {
+        val nowWall = System.currentTimeMillis()
+        val nowElapsed = android.os.SystemClock.elapsedRealtime()
+        val lockUntilMs = resolveSyncCodeLockoutUntilMs(nowWall, nowElapsed)
+        return PairingRateLimiter.remainingLockoutSeconds(lockUntilMs, nowWall)
+    }
+
+    actual fun resetSyncCodeFailedAttempts() {
+        sharedPreferences.edit()
+            .putInt("sync_code_failed_attempts", 0)
+            .putLong("sync_code_lockout_until", 0L)
+            .putLong("sync_code_lockout_elapsed", 0L)
             .commit()
     }
 

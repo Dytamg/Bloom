@@ -30,13 +30,18 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.luminance
 import com.novarytm.tracker.CycleTracker
 import kotlin.time.Clock
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
 import com.novarytm.db.CycleEntry
 import com.novarytm.sync.PartnerPermissions
 import com.novarytm.utils.AppStrings
@@ -157,7 +162,7 @@ fun CalendarGrid(
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .height(44.dp)
+                            .height(48.dp)
                             .padding(2.dp),
                         contentAlignment = Alignment.Center
                     ) {
@@ -168,6 +173,7 @@ fun CalendarGrid(
                             val isPredicted = predictedDates.contains(currentDate)
                             val isFertile = fertileDates.contains(currentDate)
                             val isToday = currentDate == today
+                            val isSelected = selectedDate == currentDate
                             val isSexual = sexualActivityDates.containsKey(currentDate)
                             val sexualType = sexualActivityDates[currentDate]?.lowercase()
                             val effectiveZeroFlow = if (zeroFlowDates.isNotEmpty()) zeroFlowDates else symptomOnlyDates
@@ -177,31 +183,49 @@ fun CalendarGrid(
                             val PeriodColor = appColors.primaryVariant
                             val FertileColor = appColors.secondaryVariant
                             val TodayColor = appColors.todayHighlight
+                            val loggedTextColor = if (PeriodColor.luminance() > 0.5f) Color(0xFF2B2525) else Color.White
+                            val fertileShape = RoundedCornerShape(8.dp)
+                            val cellShape = if (isFertile && !isLogged) fertileShape else CircleShape
+
+                            val intimacyLabel = when (sexualType) {
+                                "protected" -> "Protected intimacy logged"
+                                "unprotected" -> "Unprotected intimacy logged"
+                                "masturbation" -> "Masturbation logged"
+                                else -> "Intimacy logged"
+                            }
+                            val dayDescription = buildString {
+                                append(currentDate.toHumanReadable())
+                                if (isSelected) append(", Selected")
+                                if (isToday) append(", Today")
+                                if (isLogged) append(", Period logged")
+                                if (isPredicted) append(", Predicted period")
+                                if (isFertile) append(", Fertile window")
+                                if (isZeroFlow) append(", Symptoms logged, no flow")
+                                if (isSexual) append(", $intimacyLabel")
+                            }
 
                             Box(
                                 modifier = Modifier
                                     .size(44.dp)
-                                    .semantics(mergeDescendants = true) {
-                                        contentDescription = buildString {
-                                            append(currentDate.toHumanReadable())
-                                            if (isToday) append(", Today")
-                                            if (isLogged) append(", Period logged")
-                                            if (isPredicted) append(", Predicted period")
-                                            if (isFertile) append(", Fertile window")
-                                            if (isZeroFlow) append(", Symptoms logged")
-                                            if (isSexual) append(", Intimacy logged")
+                                    .clip(cellShape)
+                                    .clickable { onDateSelected(currentDate) }
+                                    .clearAndSetSemantics {
+                                        contentDescription = dayDescription
+                                        role = Role.Button
+                                        selected = isSelected
+                                        onClick {
+                                            onDateSelected(currentDate)
+                                            true
                                         }
                                     }
-                                    .clickable { onDateSelected(currentDate) }
-                                    .then(
-                                        if (selectedDate == currentDate) {
-                                            Modifier.border(2.dp, Color.Black, CircleShape)
-                                        } else Modifier
-                                    )
                                     .then(
                                         when {
-                                            isLogged -> Modifier.background(PeriodColor, CircleShape)
-                                            isFertile -> Modifier.background(FertileColor, CircleShape)
+                                            isLogged -> Modifier
+                                                .background(PeriodColor, CircleShape)
+                                                .border(1.5.dp, Color(0xFF3E3636).copy(alpha = 0.6f), CircleShape)
+                                            isFertile -> Modifier
+                                                .background(FertileColor, fertileShape)
+                                                .border(1.25.dp, Color(0xFF2E6B38).copy(alpha = 0.6f), fertileShape)
                                             isPredicted -> Modifier.drawBehind {
                                                 drawCircle(
                                                     color = PeriodColor,
@@ -214,28 +238,45 @@ fun CalendarGrid(
                                                     )
                                                 )
                                             }
-                                            isZeroFlow -> Modifier.border(1.dp, PeriodColor.copy(alpha = 0.4f), CircleShape)
+                                            isZeroFlow -> Modifier.border(1.5.dp, PeriodColor.copy(alpha = 0.85f), CircleShape)
                                             else -> Modifier
                                         }
+                                    )
+                                    .then(
+                                        if (isSelected) {
+                                            Modifier.border(2.dp, Color.Black, cellShape)
+                                        } else Modifier
                                     ),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
                                     text = day.toString(),
-                                    color = if (isLogged) Color.White else if (isToday) TodayColor else MaterialTheme.colorScheme.onSurface,
+                                    color = if (isLogged) loggedTextColor else if (isToday) TodayColor else MaterialTheme.colorScheme.onSurface,
                                     style = MaterialTheme.typography.bodyMedium.copy(fontWeight = if (isToday || isLogged) FontWeight.Bold else FontWeight.Normal)
                                 )
                                 
                                 Row(
-                                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 2.dp),
+                                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 3.dp),
                                     horizontalArrangement = Arrangement.spacedBy(2.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     if (isToday) {
-                                        Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(if (isLogged) Color.White else TodayColor))
+                                        // Distinct horizontal underline bar for Today (never confused with 0-Flow hollow ring)
+                                        Box(
+                                            modifier = Modifier
+                                                .width(12.dp)
+                                                .height(2.5.dp)
+                                                .clip(RoundedCornerShape(1.5.dp))
+                                                .background(if (isLogged) loggedTextColor else TodayColor)
+                                        )
                                     }
-                                    if (isZeroFlow) {
-                                        Box(modifier = Modifier.size(4.dp).clip(CircleShape).background(if (isLogged) Color.White else PeriodColor.copy(alpha = 0.6f)))
+                                    if (isZeroFlow && (isFertile || isPredicted || isToday)) {
+                                        // Distinct mini hollow ring when 0-Flow overlaps another state
+                                        Box(
+                                            modifier = Modifier
+                                                .size(5.dp)
+                                                .border(1.2.dp, PeriodColor.copy(alpha = 0.9f), CircleShape)
+                                        )
                                     }
                                     if (isSexual) {
                                         val icon = when (sexualType) {
@@ -244,14 +285,14 @@ fun CalendarGrid(
                                             else -> Icons.Default.Favorite
                                         }
                                         val iconTint = when (sexualType) {
-                                            "protected" -> Color(0xFF81C784)
-                                            "masturbation" -> Color(0xFF64B5F6)
-                                            else -> Color(0xFFE57373)
+                                            "protected" -> Color(0xFF2E7D32)
+                                            "masturbation" -> Color(0xFF1976D2)
+                                            else -> Color(0xFFC62828)
                                         }
                                         Icon(
                                             imageVector = icon, 
                                             contentDescription = null, 
-                                            tint = if (isLogged) Color.White else iconTint, 
+                                            tint = if (isLogged) loggedTextColor else iconTint, 
                                             modifier = Modifier.size(8.dp)
                                         )
                                     }
@@ -262,7 +303,7 @@ fun CalendarGrid(
                 }
                 // Fill remaining empty slots in the last row to maintain alignment
                 repeat(7 - rowDays.size) {
-                    Spacer(modifier = Modifier.weight(1f).height(44.dp))
+                    Spacer(modifier = Modifier.weight(1f).height(48.dp))
                 }
             }
         }
@@ -276,7 +317,8 @@ fun CalendarScreen(
     isPartner: Boolean = false,
     partnerPerms: PartnerPermissions? = null,
     onEditEntry: (CycleEntry, String?) -> Unit,
-    onDeleteEntry: (Long) -> Unit
+    onDeleteEntry: (Long) -> Unit,
+    onDeleteEntries: (List<Long>) -> Unit = { ids -> ids.forEach(onDeleteEntry) }
 ) {
     val coroutineScope = rememberCoroutineScope()
     val initialPage = 500
@@ -543,7 +585,9 @@ fun CalendarScreen(
                             onEditEntry(firstEntry, group.endDate.toString())
                         },
                         onDelete = {
-                            group.ids.forEach { id -> onDeleteEntry(id) }
+                            if (group.ids.isNotEmpty()) {
+                                onDeleteEntries(group.ids)
+                            }
                         },
                         onEditDay = { dayEntry ->
                             onEditEntry(dayEntry, null)
@@ -970,13 +1014,15 @@ fun CalendarLegend(
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         if (showCyclePhase) {
-            // 1. Period Indicator
+            // 1. Period Indicator: solid circle + crisp outer ring
             LegendItem(
                 text = "Period",
-                iconModifier = Modifier.background(PeriodColor, CircleShape)
+                iconModifier = Modifier
+                    .background(PeriodColor, CircleShape)
+                    .border(1.5.dp, Color(0xFF3E3636).copy(alpha = 0.6f), CircleShape)
             )
 
-            // 2. Predicted Indicator (Dotted)
+            // 2. Predicted Indicator: dashed circle
             LegendItem(
                 text = "Predicted",
                 iconModifier = Modifier.drawBehind {
@@ -993,18 +1039,26 @@ fun CalendarLegend(
                 }
             )
 
-            // 3. Fertile Indicator
+            // 3. Fertile Indicator: soft rounded-square + subtle border (matches CalendarGrid RoundedCornerShape(8.dp))
             LegendItem(
                 text = "Fertile",
-                iconModifier = Modifier.background(FertileColor, CircleShape)
+                icon = {
+                    val legendFertileShape = RoundedCornerShape(4.dp)
+                    Box(
+                        modifier = Modifier
+                            .size(14.dp)
+                            .background(FertileColor, legendFertileShape)
+                            .border(1.25.dp, Color(0xFF2E6B38).copy(alpha = 0.6f), legendFertileShape)
+                    )
+                }
             )
         }
 
         if (showSymptoms) {
-            // 4. 0 Flow / Symptoms
+            // 4. 0 Flow / Symptoms: hollow ring
             LegendItem(
                 text = AppStrings.get("legend_no_flow"),
-                iconModifier = Modifier.border(1.5.dp, PeriodColor.copy(alpha = 0.7f), CircleShape)
+                iconModifier = Modifier.border(1.5.dp, PeriodColor.copy(alpha = 0.85f), CircleShape)
             )
         }
 
@@ -1016,17 +1070,38 @@ fun CalendarLegend(
                     Icon(
                         imageVector = Icons.Default.Favorite,
                         contentDescription = null,
-                        tint = Color(0xFFE57373),
+                        tint = Color(0xFFC62828),
                         modifier = Modifier.size(12.dp)
                     )
                 }
             )
         }
 
-        // 6. Today Indicator
+        // 6. Today Indicator: bold marker + distinct horizontal underline bar
         LegendItem(
             text = "Today",
-            iconModifier = Modifier.background(LocalAppColors.current.todayHighlight, CircleShape).padding(4.dp)
+            icon = {
+                Column(
+                    modifier = Modifier.size(14.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Bottom
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(5.dp)
+                            .clip(CircleShape)
+                            .background(appColors.todayHighlight)
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Box(
+                        modifier = Modifier
+                            .width(12.dp)
+                            .height(2.5.dp)
+                            .clip(RoundedCornerShape(1.5.dp))
+                            .background(appColors.todayHighlight)
+                    )
+                }
+            }
         )
     }
 }

@@ -4,13 +4,40 @@ package com.novarytm.sync
 
 import com.novarytm.db.CycleEntry
 import com.novarytm.db.NovarytmDatabase
+import com.novarytm.notifications.NotificationScheduling
+import com.novarytm.notifications.reminderNotificationId
+import com.novarytm.notifications.repeatIntervalMsFor
 import com.novarytm.tracker.CycleTracker
 import com.novarytm.ui.PeriodGroup
 import com.novarytm.ui.groupPeriodEntries
 import com.novarytm.utils.AppJson
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.HttpClientEngineBase
+import io.ktor.client.engine.HttpClientEngineConfig
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.request.HttpRequestData
+import io.ktor.client.request.HttpResponseData
+import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
+import io.ktor.http.HttpProtocolVersion
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.OutgoingContent
+import io.ktor.http.headersOf
+import io.ktor.serialization.kotlinx.json.json
+import io.ktor.util.date.GMTDate
+import io.ktor.utils.io.ByteReadChannel
+import io.ktor.utils.io.toByteArray
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.LocalDate
+import kotlin.coroutines.CoroutineContext
 import kotlin.test.*
 
 class SyncManagerTest {
@@ -1129,5 +1156,1076 @@ class SyncManagerTest {
 
         scheduler.cancelPartnerPull()
         assertEquals(1, partnerPullCancelCount)
+    }
+
+    // =========================================================================
+    // E2E FAKES: Storage, Auth, Scheduler, Notifications, Mock Drive HTTP Engine
+    // =========================================================================
+
+    private class FakeSyncCryptoBridge : SyncCryptoBridge {
+        private var storedPermissions: PartnerPermissions = PartnerPermissions()
+
+        override fun getPartnerPermissions(): PartnerPermissions = storedPermissions
+
+        override fun savePartnerPermissions(permissions: PartnerPermissions) {
+            storedPermissions = permissions
+        }
+
+        override fun generateRandomKey(): ByteArray = ByteArray(32) { (it + 1).toByte() }
+
+        @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
+        override fun encryptForSync(payloadJson: String, sharedKeyBase64: String): String {
+            return kotlin.io.encoding.Base64.Default.encode("$sharedKeyBase64::$payloadJson".encodeToByteArray())
+        }
+
+        @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
+        override fun decryptFromSync(encryptedBase64: String, sharedKeyBase64: String): String {
+            return try {
+                val decoded = kotlin.io.encoding.Base64.Default.decode(encryptedBase64).decodeToString()
+                val prefix = "$sharedKeyBase64::"
+                if (decoded.startsWith(prefix)) decoded.removePrefix(prefix) else ""
+            } catch (_: Exception) {
+                ""
+            }
+        }
+    }
+
+    private class FakeSyncKeyValueStore(
+        private var storedUserId: String? = null,
+        private var storedTargetSyncId: String? = null,
+        private var storedPartnerEmail: String? = null,
+        private var storedSyncSecretKey: ByteArray? = null,
+        private var storedPrimarySyncFileId: String? = null,
+        private var storedLastSyncTimestamp: Long = 0L,
+        private var storedLastSuccessfulSyncWallclock: Long = 0L,
+        private var storedPartnerPermissionsJson: String = "",
+        private var storedPendingSyncUpload: Boolean = false
+    ) : SyncKeyValueStore {
+        override fun hasPendingSyncUpload(): Boolean = storedPendingSyncUpload
+        override fun setPendingSyncUpload(pending: Boolean) { storedPendingSyncUpload = pending }
+        override fun getUserId(): String? = storedUserId
+        override fun getTargetSyncId(): String? = storedTargetSyncId
+        override fun saveTargetSyncId(id: String) { storedTargetSyncId = id }
+        override fun getPartnerEmail(): String? = storedPartnerEmail
+        override fun getSyncSecretKey(): ByteArray? = storedSyncSecretKey?.copyOf()
+        override fun saveSyncSecretKey(key: ByteArray) { storedSyncSecretKey = key.copyOf() }
+        override fun getPrimarySyncFileId(): String? = storedPrimarySyncFileId
+        override fun savePrimarySyncFileId(fileId: String?) { storedPrimarySyncFileId = fileId }
+        override fun getLastSyncTimestamp(): Long = storedLastSyncTimestamp
+        override fun saveLastSyncTimestamp(timestampMs: Long) { storedLastSyncTimestamp = timestampMs }
+        override fun saveLastSuccessfulSyncWallclock(timestampMs: Long) { storedLastSuccessfulSyncWallclock = timestampMs }
+        override fun savePartnerPermissionsJson(json: String) { storedPartnerPermissionsJson = json }
+    }
+
+    private class FakeDriveAuthProvider(
+        private val tokens: ArrayDeque<String?> = ArrayDeque(listOf("valid-token")),
+        override var needsInteractiveReauth: Boolean = false
+    ) : DriveAuthProvider {
+        val clearedTokens = mutableListOf<String>()
+
+        override suspend fun getAccessToken(scopes: List<String>): String? {
+            return if (tokens.size > 1) tokens.removeFirst() else tokens.firstOrNull()
+        }
+
+        override suspend fun clearToken(token: String) {
+            clearedTokens.add(token)
+        }
+    }
+
+    private class FakeSyncUploadScheduler : SyncUploadScheduler {
+        var schedulePendingCount = 0
+        var cancelPendingCount = 0
+        var schedulePartnerPullCount = 0
+        var cancelPartnerPullCount = 0
+
+        override fun schedulePendingUpload() { schedulePendingCount++ }
+        override fun cancelPendingUpload() { cancelPendingCount++ }
+        override fun schedulePeriodicPartnerPull() { schedulePartnerPullCount++ }
+        override fun cancelPartnerPull() { cancelPartnerPullCount++ }
+    }
+
+    private data class ScheduledNotificationCall(
+        val id: Int,
+        val title: String,
+        val body: String,
+        val delayMillis: Long
+    )
+
+    private class FakeNotificationScheduler : NotificationScheduling {
+        val scheduled = mutableListOf<ScheduledNotificationCall>()
+        val cancelled = mutableListOf<Int>()
+
+        override fun scheduleNotification(id: Int, title: String, body: String, delayMillis: Long) {
+            scheduled.add(ScheduledNotificationCall(id, title, body, delayMillis))
+        }
+
+        override fun cancelNotification(id: Int) {
+            cancelled.add(id)
+        }
+    }
+
+    private data class FakeHttpReply(
+        val status: HttpStatusCode,
+        val body: ByteArray = ByteArray(0),
+        val contentType: ContentType = ContentType.Application.Json
+    )
+
+    private class FakeDriveHttpEngine(
+        private val handler: suspend (HttpRequestData, ByteArray) -> FakeHttpReply
+    ) : HttpClientEngineBase("fake-drive") {
+        override val config: HttpClientEngineConfig = HttpClientEngineConfig()
+        override val dispatcher = Dispatchers.Default
+
+        @io.ktor.utils.io.InternalAPI
+        override suspend fun execute(data: HttpRequestData): HttpResponseData {
+            val requestBytes = when (val body = data.body) {
+                is OutgoingContent.ByteArrayContent -> body.bytes()
+                is OutgoingContent.WriteChannelContent -> coroutineScope {
+                    val channel = io.ktor.utils.io.ByteChannel(autoFlush = true)
+                    launch {
+                        try {
+                            body.writeTo(channel)
+                        } finally {
+                            channel.flushAndClose()
+                        }
+                    }
+                    channel.toByteArray()
+                }
+                else -> ByteArray(0)
+            }
+            val reply = handler(data, requestBytes)
+            return HttpResponseData(
+                statusCode = reply.status,
+                requestTime = GMTDate(),
+                headers = headersOf(HttpHeaders.ContentType, reply.contentType.toString()),
+                version = HttpProtocolVersion.HTTP_1_1,
+                body = ByteReadChannel(reply.body),
+                callContext = io.ktor.client.engine.callContext()
+            )
+        }
+    }
+
+    private val activeTestHttpClients = mutableListOf<HttpClient>()
+
+    @AfterTest
+    fun closeTestHttpClients() {
+        activeTestHttpClients.forEach { client ->
+            runCatching { client.close() }
+        }
+        activeTestHttpClients.clear()
+    }
+
+    private fun createMockDriveHttpClient(
+        handler: suspend (HttpRequestData, ByteArray) -> FakeHttpReply
+    ): HttpClient {
+        return HttpClient(FakeDriveHttpEngine(handler)) {
+            install(ContentNegotiation) {
+                json(AppJson)
+            }
+        }.also { activeTestHttpClients.add(it) }
+    }
+
+    private fun createMockDriveClient(
+        authProvider: DriveAuthProvider,
+        retryBaseDelayMs: Long = 1L,
+        httpClient: HttpClient? = null,
+        handler: suspend (HttpRequestData, ByteArray) -> FakeHttpReply
+    ): GoogleDriveManager {
+        val client = httpClient ?: createMockDriveHttpClient(handler)
+        return GoogleDriveManager(
+            authProvider = authProvider,
+            httpClient = client,
+            retryBaseDelayMs = retryBaseDelayMs
+        )
+    }
+
+    // =========================================================================
+    // E2E TEST 1: Owner -> GoogleDriveManager -> Partner Pull + Auth/Revoke
+    // =========================================================================
+
+    @Test
+    fun testE2E_ownerToDriveToPartner_andAuthHtmlRevokeFlows() {
+        runBlocking {
+            val ownerCrypto = FakeSyncCryptoBridge()
+            val partnerCrypto = FakeSyncCryptoBridge()
+            val secretKey = ownerCrypto.generateRandomKey()
+
+            // Owner state
+            val ownerDb = createInMemoryDb()
+            val ownerQueries = ownerDb.cycleQueries
+            val ownerStorage = FakeSyncKeyValueStore(
+                storedUserId = "owner-123",
+                storedPartnerEmail = "partner@example.com",
+                storedSyncSecretKey = secretKey
+            )
+            val ownerScheduler = FakeSyncUploadScheduler()
+            val ownerAuth = FakeDriveAuthProvider(ArrayDeque(listOf("owner-token")))
+
+            val recordedRequests = mutableListOf<String>()
+            var storedBlobBytes: ByteArray? = null
+            var grantedPermissionJson: String? = null
+            val driveFileId = "drive-file-e2e-1"
+
+            val ownerHttpClient = createMockDriveHttpClient { req, body ->
+                val url = req.url.toString()
+                recordedRequests.add("${req.method.value} $url")
+                when {
+                    req.method == HttpMethod.Get && url.startsWith("https://www.googleapis.com/drive/v3/files?") -> {
+                        FakeHttpReply(HttpStatusCode.OK, """{"files":[]}""".encodeToByteArray())
+                    }
+                    req.method == HttpMethod.Post && url == "https://www.googleapis.com/drive/v3/files" -> {
+                        FakeHttpReply(HttpStatusCode.OK, """{"id":"$driveFileId"}""".encodeToByteArray())
+                    }
+                    req.method == HttpMethod.Patch && url.contains("/upload/drive/v3/files/$driveFileId") -> {
+                        storedBlobBytes = body
+                        FakeHttpReply(HttpStatusCode.OK, """{"id":"$driveFileId"}""".encodeToByteArray())
+                    }
+                    req.method == HttpMethod.Post && url == "https://www.googleapis.com/drive/v3/files/$driveFileId/permissions" -> {
+                        grantedPermissionJson = body.decodeToString()
+                        FakeHttpReply(HttpStatusCode.OK, """{"id":"perm-1"}""".encodeToByteArray())
+                    }
+                    else -> FakeHttpReply(HttpStatusCode.NotFound)
+                }
+            }
+            val ownerDrive = GoogleDriveManager(ownerAuth, ownerHttpClient, retryBaseDelayMs = 1L)
+            var partnerHttpClient: HttpClient? = null
+
+            val ownerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            val partnerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            try {
+                val ownerSync = SyncManager(
+                    database = ownerDb,
+                    rustBridge = ownerCrypto,
+                    storage = ownerStorage,
+                    googleDriveManager = ownerDrive,
+                    scope = ownerScope,
+                    backgroundSyncScheduler = ownerScheduler
+                )
+
+            // Owner logs Flow 1-5, 0-flow, BirthControl.reminderTime, PregnancyTest, and Reminders
+            val ownerPerms = PartnerPermissions(
+                shareCyclePhase = true,
+                shareFlowIntensity = true,
+                shareSymptomsMoods = true,
+                shareBirthControl = true,
+                sharePregnancyTests = true,
+                shareSexualActivity = false
+            )
+            ownerCrypto.savePartnerPermissions(ownerPerms)
+            ownerQueries.insertEntry("2024-03-01", 4, "Day 1 flow", "Protected", 3, "Cramps")
+            ownerQueries.insertEntry("2024-03-10", 0, "Headache only", null, 2, "Headaches")
+            ownerQueries.setBirthControlWithReminder("Combined Oral Pill", "08:30", true)
+            ownerQueries.insertPregnancyTest("2024-03-10", "Negative")
+            ownerQueries.insertReminder("Pill", "Daily", "08:30", "2024-03-10", true)
+            ownerQueries.insertReminder("Pregnancy Test", "Monthly", "10:00", "2024-03-15", true)
+
+            val uploadedId = ownerSync.prepareAndUploadPayload()
+            assertEquals(driveFileId, uploadedId)
+            assertEquals(driveFileId, ownerStorage.getPrimarySyncFileId())
+            assertNotNull(storedBlobBytes)
+            assertTrue(recordedRequests.any { it.startsWith("POST https://www.googleapis.com/drive/v3/files") && !it.contains("permissions") })
+            assertTrue(recordedRequests.any { it.startsWith("PATCH https://www.googleapis.com/upload/drive/v3/files/$driveFileId") })
+            assertTrue(recordedRequests.any { it.startsWith("POST https://www.googleapis.com/drive/v3/files/$driveFileId/permissions") })
+            assertTrue(grantedPermissionJson?.contains("\"role\":\"reader\"") == true)
+            assertTrue(grantedPermissionJson?.contains("partner@example.com") == true)
+
+            // Partner pulls & imports via GoogleDriveManager (with 401 refresh retry first!)
+            val partnerDb = createInMemoryDb()
+            val partnerStorage = FakeSyncKeyValueStore(
+                storedTargetSyncId = driveFileId,
+                storedSyncSecretKey = secretKey
+            )
+            val partnerScheduler = FakeSyncUploadScheduler()
+            val partnerAuth = FakeDriveAuthProvider(ArrayDeque(listOf("stale-token", "fresh-token")))
+            var getAttempts = 0
+            var mode = "NORMAL_WITH_401_RETRY"
+
+            val pClient = createMockDriveHttpClient { req, _ ->
+                val url = req.url.toString()
+                when (mode) {
+                    "NORMAL_WITH_401_RETRY" -> {
+                        if (url == "https://www.googleapis.com/drive/v3/files/$driveFileId?alt=media") {
+                            getAttempts++
+                            val authHeader = req.headers[HttpHeaders.Authorization]
+                            if (getAttempts == 1 && authHeader == "Bearer stale-token") {
+                                FakeHttpReply(HttpStatusCode.Unauthorized)
+                            } else if (authHeader == "Bearer fresh-token") {
+                                FakeHttpReply(HttpStatusCode.OK, storedBlobBytes!!, ContentType.Application.OctetStream)
+                            } else {
+                                FakeHttpReply(HttpStatusCode.Unauthorized)
+                            }
+                        } else {
+                            FakeHttpReply(HttpStatusCode.NotFound)
+                        }
+                    }
+                    "HTML_LOGIN" -> FakeHttpReply(
+                        HttpStatusCode.OK,
+                        "<html><body>Sign in</body></html>".encodeToByteArray(),
+                        ContentType.Text.Html
+                    )
+                    "REVOKED_403" -> FakeHttpReply(HttpStatusCode.Forbidden)
+                    "REVOKED_404" -> FakeHttpReply(HttpStatusCode.NotFound)
+                    else -> FakeHttpReply(HttpStatusCode.InternalServerError)
+                }
+            }
+            partnerHttpClient = pClient
+            val partnerDrive = GoogleDriveManager(partnerAuth, pClient, retryBaseDelayMs = 1L)
+
+            val partnerSync = SyncManager(
+                database = partnerDb,
+                rustBridge = partnerCrypto,
+                storage = partnerStorage,
+                googleDriveManager = partnerDrive,
+                scope = partnerScope,
+                backgroundSyncScheduler = partnerScheduler
+            )
+
+            val pullOutcome = partnerSync.executeBackgroundPull()
+            assertEquals(SyncManager.PullOutcome.Success, pullOutcome)
+            assertEquals(listOf("stale-token"), partnerAuth.clearedTokens)
+            assertEquals(2, getAttempts)
+
+            val partnerEntries = partnerDb.cycleQueries.selectAllEntries().executeAsList().sortedBy { it.date }
+            assertEquals(2, partnerEntries.size)
+            assertEquals(4, partnerEntries[0].intensity)
+            assertNull(partnerEntries[0].sexualRelations, "shareSexualActivity=false must redact sexualRelations")
+            assertEquals(0, partnerEntries[1].intensity)
+            assertEquals("Headaches", partnerEntries[1].symptoms)
+
+            val partnerBc = partnerDb.cycleQueries.getBirthControl().executeAsOneOrNull()
+            assertNotNull(partnerBc)
+            assertEquals("Combined Oral Pill", partnerBc.type)
+            assertEquals("08:30", partnerBc.reminderTime)
+
+            val partnerPts = partnerDb.cycleQueries.selectAllPregnancyTests().executeAsList()
+            assertEquals(1, partnerPts.size)
+            assertEquals("Negative", partnerPts[0].result)
+
+            val partnerReminders = partnerDb.cycleQueries.selectAllReminders().executeAsList()
+            assertEquals(2, partnerReminders.size)
+
+            // text/html rejection -> syncAuthRequired
+            mode = "HTML_LOGIN"
+            val htmlOutcome = partnerSync.executeBackgroundPull()
+            assertEquals(SyncManager.PullOutcome.AuthRequired, htmlOutcome)
+            assertTrue(partnerSync.syncAuthRequired.value)
+
+            // 403/404 REVOKED -> silent Partner wipe
+            mode = "REVOKED_404"
+            val revokeOutcome = partnerSync.executeBackgroundPull()
+            assertEquals(SyncManager.PullOutcome.Revoked, revokeOutcome)
+            assertTrue(partnerDb.cycleQueries.selectAllEntries().executeAsList().isEmpty())
+            assertTrue(partnerDb.cycleQueries.selectAllPregnancyTests().executeAsList().isEmpty())
+            assertTrue(partnerDb.cycleQueries.selectAllReminders().executeAsList().isEmpty())
+            assertNull(partnerDb.cycleQueries.getBirthControl().executeAsOneOrNull())
+            assertEquals("", partnerStorage.getTargetSyncId())
+            assertNull(partnerSync.syncWarning.value)
+            assertFalse(partnerSync.syncAuthRequired.value)
+            assertTrue(partnerScheduler.cancelPartnerPullCount >= 1)
+            } finally {
+                ownerScope.cancel()
+                partnerScope.cancel()
+                ownerHttpClient.close()
+                partnerHttpClient?.close()
+            }
+        }
+    }
+
+    // =========================================================================
+    // E2E TEST 2: Wi-Fi & Cellular Connection Transitions (503 -> Recovery)
+    // =========================================================================
+
+    @Test
+    fun testE2E_offline503FailureAndConnectionRecovery() {
+        runBlocking {
+            val cryptoBridge = FakeSyncCryptoBridge()
+            val secretKey = cryptoBridge.generateRandomKey()
+
+            val ownerDb = createInMemoryDb()
+            ownerDb.cycleQueries.insertEntry("2024-03-02", 3, "Flow", null, 2, "Cramps")
+            val ownerStorage = FakeSyncKeyValueStore(
+                storedUserId = "owner-1",
+                storedPartnerEmail = "partner@example.com",
+                storedSyncSecretKey = secretKey,
+                storedPrimarySyncFileId = "file-conn-1"
+            )
+            val ownerScheduler = FakeSyncUploadScheduler()
+            val auth = FakeDriveAuthProvider()
+            var isOnline = false
+
+            val ownerHttpClient = createMockDriveHttpClient { req, _ ->
+                if (!isOnline) {
+                    FakeHttpReply(HttpStatusCode.ServiceUnavailable)
+                } else if (req.method == HttpMethod.Patch) {
+                    FakeHttpReply(HttpStatusCode.OK, """{"id":"file-conn-1"}""".encodeToByteArray())
+                } else if (req.method == HttpMethod.Post) {
+                    FakeHttpReply(HttpStatusCode.OK, """{"id":"perm-1"}""".encodeToByteArray())
+                } else {
+                    FakeHttpReply(HttpStatusCode.NotFound)
+                }
+            }
+            val drive = GoogleDriveManager(auth, ownerHttpClient, retryBaseDelayMs = 1L)
+            var partnerHttpClient: HttpClient? = null
+
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            try {
+                val sync = SyncManager(
+                database = ownerDb,
+                rustBridge = cryptoBridge,
+                storage = ownerStorage,
+                googleDriveManager = drive,
+                scope = scope,
+                backgroundSyncScheduler = ownerScheduler
+            )
+
+            // Offline/503 failure -> hasPendingSyncUpload = true + schedulePendingUpload()
+            val failedResult = sync.prepareAndUploadPayload()
+            assertNull(failedResult)
+            assertTrue(ownerStorage.hasPendingSyncUpload())
+            assertTrue(ownerScheduler.schedulePendingCount >= 1)
+
+            // Connection recovers -> executeBackgroundUpload() succeeds and clears pending flag
+            isOnline = true
+            val bgOutcome = sync.executeBackgroundUpload()
+            assertTrue(bgOutcome is SyncManager.UploadOutcome.Success)
+            assertFalse(ownerStorage.hasPendingSyncUpload())
+            val recoveredId = sync.prepareAndUploadPayload()
+            assertEquals("file-conn-1", recoveredId)
+            assertFalse(ownerStorage.hasPendingSyncUpload())
+            assertTrue(ownerScheduler.cancelPendingCount >= 1)
+            assertNull(sync.syncWarning.value)
+
+            // Partner connection transition: 503 -> RetryableFailure -> recovery
+            val partnerDb = createInMemoryDb()
+            val partnerStorage = FakeSyncKeyValueStore(storedTargetSyncId = "file-conn-1", storedSyncSecretKey = secretKey)
+            var partnerOnline = false
+            val pClient = createMockDriveHttpClient { _, _ ->
+                if (!partnerOnline) FakeHttpReply(HttpStatusCode.ServiceUnavailable)
+                else FakeHttpReply(HttpStatusCode.NotFound)
+            }
+            partnerHttpClient = pClient
+            val partnerDrive = GoogleDriveManager(auth, pClient, retryBaseDelayMs = 1L)
+            val partnerSync = SyncManager(
+                database = partnerDb,
+                rustBridge = FakeSyncCryptoBridge(),
+                storage = partnerStorage,
+                googleDriveManager = partnerDrive,
+                scope = scope
+            )
+            val pullFail = partnerSync.executeBackgroundPull()
+            assertTrue(pullFail is SyncManager.PullOutcome.RetryableFailure)
+            partnerOnline = true
+            assertEquals(SyncManager.PullOutcome.Revoked, partnerSync.executeBackgroundPull())
+            } finally {
+                scope.cancel()
+                ownerHttpClient.close()
+                partnerHttpClient?.close()
+            }
+        }
+    }
+
+    // =========================================================================
+    // E2E TEST 3: Unpaired Owner Banner (No _syncWarning emitted)
+    // =========================================================================
+
+    @Test
+    fun testE2E_unpairedOwnerWithPreExistingKeyAndPerms_emitsNoSyncWarning() {
+        runBlocking {
+            val cryptoBridge = FakeSyncCryptoBridge()
+            val db = createInMemoryDb()
+            val storage = FakeSyncKeyValueStore(
+                storedUserId = "owner-unpaired",
+                storedPartnerEmail = null,
+                storedSyncSecretKey = cryptoBridge.generateRandomKey(),
+                storedPrimarySyncFileId = null,
+                storedLastSyncTimestamp = 0L,
+                storedPartnerPermissionsJson = """{"shareCyclePhase":true}"""
+            )
+            val scheduler = FakeSyncUploadScheduler()
+            val httpClient = createMockDriveHttpClient { _, _ ->
+                fail("Unpaired owner should not make Drive HTTP requests")
+            }
+            val drive = GoogleDriveManager(FakeDriveAuthProvider(), httpClient, retryBaseDelayMs = 1L)
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            try {
+                val sync = SyncManager(
+                database = db,
+                rustBridge = cryptoBridge,
+                storage = storage,
+                googleDriveManager = drive,
+                scope = scope,
+                backgroundSyncScheduler = scheduler
+            )
+
+            val result = sync.prepareAndUploadPayload()
+            assertNull(result)
+            assertNull(sync.syncWarning.value, "Unpaired owner must not emit _syncWarning")
+            assertFalse(storage.hasPendingSyncUpload())
+            } finally {
+                scope.cancel()
+                httpClient.close()
+            }
+        }
+    }
+
+    // =========================================================================
+    // E2E TEST 4: Notification IDs (No 107 Collision), Repeat Intervals, Cancel
+    // =========================================================================
+
+    @Test
+    fun testE2E_notificationIds_repeatIntervals_andCancellation() {
+        val scheduler = FakeNotificationScheduler()
+        val dayMs = 24L * 60 * 60 * 1000L
+
+        val expectedIds = mapOf(
+            ("Pill" to "Daily") to 101,
+            ("IUD String Check" to "Monthly") to 102,
+            ("Arm Implant Replacement" to "Once") to 103,
+            ("Contraceptive Patch" to "Weekly (3 on, 1 off)") to 104,
+            ("Vaginal Ring (Remove)" to "Every 3 Weeks") to 105,
+            ("Hormonal IUD Replacement (5 Years)" to "Once") to 106,
+            ("Copper IUD Replacement (10 Years)" to "Once") to 107,
+            ("Pregnancy Test" to "Monthly") to 108,
+            ("Contraceptive Injection" to "Every 12 Weeks") to 109
+        )
+
+        val actualIds = expectedIds.keys.map { (type, freq) ->
+            val id = reminderNotificationId(type, freq)
+            scheduler.scheduleNotification(id, "Bloom", "$type ($freq)", 1000L)
+            id
+        }
+
+        assertEquals(expectedIds.values.toList(), actualIds)
+        assertEquals(9, actualIds.toSet().size, "All 9 reminder types must have distinct IDs (no 107 collision)")
+
+        // Verify 21-day, 28-day, and 84-day repeat intervals
+        assertEquals(21L * dayMs, repeatIntervalMsFor("Bloom", "Time to change your ring"))
+        assertEquals(21L * dayMs, repeatIntervalMsFor("Every 3 Weeks", "Ring"))
+        assertEquals(28L * dayMs, repeatIntervalMsFor("Every 4 Weeks", "Insert ring"))
+        assertEquals(84L * dayMs, repeatIntervalMsFor("Bloom", "Time for your next shot"))
+        assertEquals(84L * dayMs, repeatIntervalMsFor("Every 12 Weeks", "Contraceptive Injection"))
+
+        // Verify cancellation on reminder delete and BC "None"
+        scheduler.cancelNotification(reminderNotificationId("Copper IUD Replacement (10 Years)", "Once"))
+        scheduler.cancelNotification(reminderNotificationId("Contraceptive Injection", "Every 12 Weeks"))
+        assertEquals(listOf(107, 109), scheduler.cancelled)
+    }
+
+    // =========================================================================
+    // E2E TEST 5: SQLDelight V1 -> V2 Migration & Partial-Column Idempotency
+    // =========================================================================
+
+    @Test
+    fun testSQLDelightV1ToV2Migration_rowPreservation_andPartialColumnIdempotency() {
+        val intAdapter = object : app.cash.sqldelight.ColumnAdapter<Int, Long> {
+            override fun decode(databaseValue: Long) = databaseValue.toInt()
+            override fun encode(value: Int) = value.toLong()
+        }
+
+        // Part 1: Pure V1 CycleEntry table (without painLevel/symptoms or V2 tables) -> V2
+        val v1Driver = app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver(
+            app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver.IN_MEMORY
+        )
+        try {
+            v1Driver.execute(
+                null,
+                """
+                CREATE TABLE CycleEntry (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date TEXT NOT NULL UNIQUE,
+                    intensity INTEGER,
+                    notes TEXT,
+                    sexualRelations TEXT
+                );
+                """.trimIndent(),
+                0
+            )
+            v1Driver.execute(null, "INSERT INTO CycleEntry(date, intensity, notes, sexualRelations) VALUES ('2024-01-10', 4, 'Heavy V1 day 1', 'protected');", 0)
+            v1Driver.execute(null, "INSERT INTO CycleEntry(date, intensity, notes, sexualRelations) VALUES ('2024-01-11', 2, 'Lighter V1 day 2', NULL);", 0)
+            v1Driver.execute(null, "INSERT INTO CycleEntry(date, intensity, notes, sexualRelations) VALUES ('2024-02-07', 0, 'V1 check-in note', 'unprotected');", 0)
+
+            com.novarytm.db.SafeMigrationSchema.migrate(v1Driver, 1L, 2L)
+
+            val migratedDb = NovarytmDatabase(
+                driver = v1Driver,
+                CycleEntryAdapter = CycleEntry.Adapter(
+                    intensityAdapter = intAdapter,
+                    painLevelAdapter = intAdapter
+                )
+            )
+
+            // Assert 100% V1 row preservation + nullable V2 columns
+            val preservedEntries = migratedDb.cycleQueries.selectAllEntries().executeAsList().sortedBy { it.date }
+            assertEquals(3, preservedEntries.size, "All 3 V1 rows must be preserved across V1->V2 migration")
+
+            assertEquals("2024-01-10", preservedEntries[0].date)
+            assertEquals(4, preservedEntries[0].intensity)
+            assertEquals("Heavy V1 day 1", preservedEntries[0].notes)
+            assertEquals("protected", preservedEntries[0].sexualRelations)
+            assertNull(preservedEntries[0].painLevel)
+            assertNull(preservedEntries[0].symptoms)
+
+            assertEquals("2024-01-11", preservedEntries[1].date)
+            assertEquals(2, preservedEntries[1].intensity)
+            assertEquals("Lighter V1 day 2", preservedEntries[1].notes)
+            assertNull(preservedEntries[1].sexualRelations)
+            assertNull(preservedEntries[1].painLevel)
+            assertNull(preservedEntries[1].symptoms)
+
+            assertEquals("2024-02-07", preservedEntries[2].date)
+            assertEquals(0, preservedEntries[2].intensity)
+            assertEquals("V1 check-in note", preservedEntries[2].notes)
+            assertEquals("unprotected", preservedEntries[2].sexualRelations)
+            assertNull(preservedEntries[2].painLevel)
+            assertNull(preservedEntries[2].symptoms)
+
+            // Assert new V2 columns and BirthControl/PregnancyTest/Reminder tables work cleanly
+            migratedDb.cycleQueries.insertEntry("2024-03-01", 3, "New V2 entry", "protected", 6, "Cramps,Headaches")
+            val v2Entry = migratedDb.cycleQueries.selectEntryByDate("2024-03-01").executeAsOne()
+            assertEquals(6, v2Entry.painLevel)
+            assertEquals("Cramps,Headaches", v2Entry.symptoms)
+
+            migratedDb.cycleQueries.setBirthControlWithReminder("Hormonal IUD", "08:30", true)
+            val bc = migratedDb.cycleQueries.getBirthControl().executeAsOneOrNull()
+            assertNotNull(bc)
+            assertEquals("Hormonal IUD", bc.type)
+            assertEquals("08:30", bc.reminderTime)
+
+            migratedDb.cycleQueries.insertPregnancyTest("2024-03-05", "Negative")
+            assertEquals(1, migratedDb.cycleQueries.selectAllPregnancyTests().executeAsList().size)
+
+            migratedDb.cycleQueries.insertReminder("Pill", "Daily", "08:30", "2024-03-06", true)
+            assertEquals(1, migratedDb.cycleQueries.selectAllReminders().executeAsList().size)
+        } finally {
+            v1Driver.close()
+        }
+
+        // Part 2: Partial-column V1 schema (painLevel already present, symptoms missing) + repeated migration idempotency
+        val partialDriver = app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver(
+            app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver.IN_MEMORY
+        )
+        try {
+            partialDriver.execute(
+                null,
+                """
+                CREATE TABLE CycleEntry (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date TEXT NOT NULL UNIQUE,
+                    intensity INTEGER,
+                    notes TEXT,
+                    sexualRelations TEXT,
+                    painLevel INTEGER
+                );
+                """.trimIndent(),
+                0
+            )
+            partialDriver.execute(null, "INSERT INTO CycleEntry(date, intensity, notes, sexualRelations, painLevel) VALUES ('2024-02-15', 3, 'Partial row', 'protected', 5);", 0)
+
+            // Run migrate twice + create on pre-existing table to verify complete idempotency
+            com.novarytm.db.SafeMigrationSchema.migrate(partialDriver, 1L, 2L)
+            com.novarytm.db.SafeMigrationSchema.migrate(partialDriver, 1L, 2L)
+            com.novarytm.db.SafeMigrationSchema.create(partialDriver)
+
+            val partialDb = NovarytmDatabase(
+                driver = partialDriver,
+                CycleEntryAdapter = CycleEntry.Adapter(
+                    intensityAdapter = intAdapter,
+                    painLevelAdapter = intAdapter
+                )
+            )
+            val row = partialDb.cycleQueries.selectEntryByDate("2024-02-15").executeAsOne()
+            assertEquals(3, row.intensity)
+            assertEquals("Partial row", row.notes)
+            assertEquals(5, row.painLevel)
+            assertNull(row.symptoms)
+        } finally {
+            partialDriver.close()
+        }
+    }
+
+    // =========================================================================
+    // E2E TEST 6: Offline-First Resilience (Airplane Mode IOException -> Coalesced Recovery)
+    // =========================================================================
+
+    @Test
+    fun testE2E_offlineFirstAirplaneMode_instantLocalPersistence_andCoalescedPartnerSync() {
+        runBlocking {
+            val ownerCrypto = FakeSyncCryptoBridge()
+            val partnerCrypto = FakeSyncCryptoBridge()
+            val secretKey = ownerCrypto.generateRandomKey()
+            val sharedFileId = "drive-offline-coalesce-1"
+
+            val ownerPerms = PartnerPermissions(
+                shareCyclePhase = true,
+                shareFlowIntensity = true,
+                shareSymptomsMoods = true,
+                shareBirthControl = true,
+                sharePregnancyTests = true,
+                shareSexualActivity = true
+            )
+            ownerCrypto.savePartnerPermissions(ownerPerms)
+
+            val ownerDb = createInMemoryDb()
+            val ownerStorage = FakeSyncKeyValueStore(
+                storedUserId = "owner-offline-1",
+                storedPartnerEmail = "partner@example.com",
+                storedSyncSecretKey = secretKey,
+                storedPrimarySyncFileId = sharedFileId
+            )
+            val ownerScheduler = FakeSyncUploadScheduler()
+            val auth = FakeDriveAuthProvider()
+
+            var isAirplaneMode = true
+            var patchUploadCount = 0
+            var latestUploadedBlob: ByteArray? = null
+
+            val ownerHttpClient = createMockDriveHttpClient { req, body ->
+                if (isAirplaneMode) {
+                    throw kotlinx.io.IOException("Airplane mode active: network unreachable")
+                }
+                when {
+                    req.method == HttpMethod.Patch && req.url.toString().contains("/upload/drive/v3/files/$sharedFileId") -> {
+                        patchUploadCount++
+                        latestUploadedBlob = body
+                        FakeHttpReply(HttpStatusCode.OK, """{"id":"$sharedFileId"}""".encodeToByteArray())
+                    }
+                    req.method == HttpMethod.Post && req.url.toString().endsWith("/permissions") -> {
+                        FakeHttpReply(HttpStatusCode.OK, """{"id":"perm-ok"}""".encodeToByteArray())
+                    }
+                    else -> FakeHttpReply(HttpStatusCode.NotFound)
+                }
+            }
+            val ownerDrive = GoogleDriveManager(auth, ownerHttpClient, retryBaseDelayMs = 1L)
+
+            val partnerDb = createInMemoryDb()
+            val partnerStorage = FakeSyncKeyValueStore(
+                storedTargetSyncId = sharedFileId,
+                storedSyncSecretKey = secretKey
+            )
+            val partnerHttpClient = createMockDriveHttpClient { req, _ ->
+                if (isAirplaneMode) {
+                    throw kotlinx.io.IOException("Airplane mode active: network unreachable")
+                }
+                if (req.method == HttpMethod.Get && latestUploadedBlob != null) {
+                    FakeHttpReply(HttpStatusCode.OK, latestUploadedBlob!!, ContentType.Application.OctetStream)
+                } else {
+                    FakeHttpReply(HttpStatusCode.NotFound)
+                }
+            }
+            val partnerDrive = GoogleDriveManager(auth, partnerHttpClient, retryBaseDelayMs = 1L)
+
+            val ownerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            val partnerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            try {
+                val ownerTracker = CycleTracker(com.novarytm.ffi.RustBridge(), ownerDb.cycleQueries, ownerScope)
+                val ownerSync = SyncManager(
+                    database = ownerDb,
+                    rustBridge = ownerCrypto,
+                    storage = ownerStorage,
+                    googleDriveManager = ownerDrive,
+                    scope = ownerScope,
+                    cycleTracker = ownerTracker,
+                    backgroundSyncScheduler = ownerScheduler
+                )
+                val partnerSync = SyncManager(
+                    database = partnerDb,
+                    rustBridge = partnerCrypto,
+                    storage = partnerStorage,
+                    googleDriveManager = partnerDrive,
+                    scope = partnerScope
+                )
+
+                // 1. Log multiple cycle entries while in Airplane mode
+                ownerTracker.logNewPeriod(
+                    date = LocalDate.parse("2024-05-01"),
+                    intensity = 4,
+                    notes = "Offline day 1",
+                    painLevel = 6,
+                    symptoms = "cramps"
+                )
+                ownerTracker.logNewPeriod(
+                    date = LocalDate.parse("2024-05-02"),
+                    intensity = 3,
+                    notes = "Offline day 2",
+                    painLevel = 3,
+                    symptoms = "headaches"
+                )
+                ownerTracker.logSexualRelation(LocalDate.parse("2024-05-04"), "protected")
+
+                // Assert instant local SQLDelight persistence while completely offline
+                awaitCondition { ownerDb.cycleQueries.selectAllEntries().executeAsList().size == 3 }
+                awaitCondition { ownerTracker.loggedDates.value.size == 2 }
+                assertTrue(ownerTracker.loggedDates.value.contains(LocalDate.parse("2024-05-01")))
+                assertTrue(ownerTracker.loggedDates.value.contains(LocalDate.parse("2024-05-02")))
+
+                // Attempt upload while offline -> fails with IOException, marks pendingSyncUpload = true
+                val offlineUploadId = ownerSync.prepareAndUploadPayload()
+                assertNull(offlineUploadId)
+                assertTrue(ownerStorage.hasPendingSyncUpload(), "Offline IOException must persist hasPendingSyncUpload == true")
+                assertTrue(ownerScheduler.schedulePendingCount >= 1)
+                assertEquals(0, patchUploadCount)
+
+                // 2. Restore network -> executeBackgroundUpload() uploads coalesced snapshot of all 3 entries in 1 PATCH
+                isAirplaneMode = false
+                val recoveryOutcome = ownerSync.executeBackgroundUpload()
+                assertTrue(recoveryOutcome is SyncManager.UploadOutcome.Success)
+                assertFalse(ownerStorage.hasPendingSyncUpload(), "Successful background upload must clear hasPendingSyncUpload")
+                assertEquals(1, patchUploadCount, "All offline mutations must coalesce into a single media upload")
+                assertNotNull(latestUploadedBlob)
+
+                // 3. Partner pulls coalesced blob and receives all 3 entries
+                val pullOutcome = partnerSync.executeBackgroundPull()
+                assertEquals(SyncManager.PullOutcome.Success, pullOutcome)
+                val syncedEntries = partnerDb.cycleQueries.selectAllEntries().executeAsList().sortedBy { it.date }
+                assertEquals(3, syncedEntries.size)
+                assertEquals("2024-05-01", syncedEntries[0].date)
+                assertEquals(4, syncedEntries[0].intensity)
+                assertEquals("Cramps", syncedEntries[0].symptoms)
+                assertEquals("2024-05-02", syncedEntries[1].date)
+                assertEquals(3, syncedEntries[1].intensity)
+                assertEquals("2024-05-04", syncedEntries[2].date)
+                assertEquals("protected", syncedEntries[2].sexualRelations)
+            } finally {
+                ownerScope.cancel()
+                partnerScope.cancel()
+                ownerHttpClient.close()
+                partnerHttpClient.close()
+            }
+        }
+    }
+
+    // =========================================================================
+    // E2E TEST 7: Pairing Brute-Force Lockout & SyncManager Rate Limiting
+    // =========================================================================
+
+    @Test
+    fun testPairingRateLimiter_exponentialBackoff_andSyncManagerRateLimit() {
+        runBlocking {
+            var fakeNowMs = 1_700_000_000_000L
+            val limiter = com.novarytm.storage.PairingRateLimiter(nowMsProvider = { fakeNowMs })
+
+            // Attempt 1 & 2: free attempts (0s lockout)
+            assertEquals(0L, limiter.recordSyncCodeFailedAttempt())
+            assertEquals(1, limiter.getSyncCodeFailedAttempts())
+            assertEquals(0L, limiter.getSyncCodeLockoutRemainingSeconds())
+            assertFalse(limiter.isLockedOut())
+
+            assertEquals(0L, limiter.recordSyncCodeFailedAttempt())
+            assertEquals(2, limiter.getSyncCodeFailedAttempts())
+            assertEquals(0L, limiter.getSyncCodeLockoutRemainingSeconds())
+            assertFalse(limiter.isLockedOut())
+
+            // Attempt 3 -> 30s lockout
+            val lock3 = limiter.recordSyncCodeFailedAttempt()
+            assertEquals(fakeNowMs + 30_000L, lock3)
+            assertEquals(3, limiter.getSyncCodeFailedAttempts())
+            assertEquals(30L, limiter.getSyncCodeLockoutRemainingSeconds())
+            assertTrue(limiter.isLockedOut())
+
+            fakeNowMs += 15_000L
+            assertEquals(15L, limiter.getSyncCodeLockoutRemainingSeconds())
+            fakeNowMs += 15_000L
+            assertEquals(0L, limiter.getSyncCodeLockoutRemainingSeconds())
+            assertFalse(limiter.isLockedOut())
+
+            // Attempt 4 -> 60s lockout
+            val lock4 = limiter.recordSyncCodeFailedAttempt()
+            assertEquals(fakeNowMs + 60_000L, lock4)
+            assertEquals(4, limiter.getSyncCodeFailedAttempts())
+            assertEquals(60L, limiter.getSyncCodeLockoutRemainingSeconds())
+            fakeNowMs += 60_000L
+            assertEquals(0L, limiter.getSyncCodeLockoutRemainingSeconds())
+
+            // Attempt 5 -> 300s lockout
+            val lock5 = limiter.recordSyncCodeFailedAttempt()
+            assertEquals(fakeNowMs + 300_000L, lock5)
+            assertEquals(5, limiter.getSyncCodeFailedAttempts())
+            assertEquals(300L, limiter.getSyncCodeLockoutRemainingSeconds())
+            fakeNowMs += 300_000L
+            assertEquals(0L, limiter.getSyncCodeLockoutRemainingSeconds())
+
+            // Attempt 6 -> remains capped at 300s
+            val lock6 = limiter.recordSyncCodeFailedAttempt()
+            assertEquals(fakeNowMs + 300_000L, lock6)
+            assertEquals(300L, limiter.getSyncCodeLockoutRemainingSeconds())
+
+            // Valid code -> reset clears attempts and lockout immediately
+            limiter.resetSyncCodeFailedAttempts()
+            assertEquals(0, limiter.getSyncCodeFailedAttempts())
+            assertEquals(0L, limiter.getSyncCodeLockoutRemainingSeconds())
+            assertFalse(limiter.isLockedOut())
+
+            // Next invalid code starts fresh at Attempt 1 (no lockout)
+            assertEquals(0L, limiter.recordSyncCodeFailedAttempt())
+            assertEquals(1, limiter.getSyncCodeFailedAttempts())
+            assertEquals(0L, limiter.getSyncCodeLockoutRemainingSeconds())
+
+            // Verify SyncManager.checkRateLimit (15 per 60s sliding window)
+            val db = createInMemoryDb()
+            val crypto = FakeSyncCryptoBridge()
+            val storage = FakeSyncKeyValueStore(
+                storedUserId = "owner-rl",
+                storedPartnerEmail = "partner@example.com",
+                storedSyncSecretKey = crypto.generateRandomKey(),
+                storedPrimarySyncFileId = "file-rl"
+            )
+            val httpClient = createMockDriveHttpClient { req, _ ->
+                if (req.method == HttpMethod.Patch) {
+                    FakeHttpReply(HttpStatusCode.OK, """{"id":"file-rl"}""".encodeToByteArray())
+                } else {
+                    FakeHttpReply(HttpStatusCode.OK, """{"id":"perm-rl"}""".encodeToByteArray())
+                }
+            }
+            val drive = GoogleDriveManager(FakeDriveAuthProvider(), httpClient, retryBaseDelayMs = 1L)
+            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            try {
+                val sync = SyncManager(
+                    database = db,
+                    rustBridge = crypto,
+                    storage = storage,
+                    googleDriveManager = drive,
+                    scope = scope
+                )
+                val t0 = kotlin.time.Clock.System.now().toEpochMilliseconds()
+                repeat(15) { idx ->
+                    assertTrue(sync.checkRateLimit(t0 + idx * 100L), "Attempt ${idx + 1} within 60s must pass")
+                }
+                assertFalse(sync.checkRateLimit(t0 + 5_000L), "16th attempt within 60s window must be rate-limited")
+
+                // Calling prepareAndUploadPayload while rate-limited emits warning and aborts
+                val blockedUpload = sync.prepareAndUploadPayload()
+                assertNull(blockedUpload)
+                assertEquals("Rate limit reached. Please wait before syncing again.", sync.syncWarning.value)
+
+                // After 60s window expires, rate limit recovers
+                assertTrue(sync.checkRateLimit(t0 + 61_600L), "Rate limit must recover after 60s window")
+            } finally {
+                scope.cancel()
+                httpClient.close()
+            }
+        }
+    }
+
+    // =========================================================================
+    // E2E TEST 8: Asymmetric Partner Read-Only Guard & Batched Deletion
+    // =========================================================================
+
+    @Test
+    fun testAsymmetricPartnerReadOnly_cycleTrackerGuard_batchedDelete_andZeroPartnerUploads() {
+        runBlocking {
+            // 1. Batched deleteEntries(ids) in Owner mode (isReadOnlyMode = false)
+            val ownerDb = createInMemoryDb()
+            val ownerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            val partnerScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            val partnerHttpMethods = mutableListOf<HttpMethod>()
+            val crypto = FakeSyncCryptoBridge()
+            val secretKey = crypto.generateRandomKey()
+
+            val emptyPartnerBlob = crypto.encryptForSync(
+                AppJson.encodeToString(
+                    SyncPayload.serializer(),
+                    SyncPayload(lastUpdated = kotlin.time.Clock.System.now().toEpochMilliseconds(), entries = emptyList())
+                ),
+                @OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
+                kotlin.io.encoding.Base64.Default.encode(secretKey)
+            ).encodeToByteArray()
+
+            val partnerHttpClient = createMockDriveHttpClient { req, _ ->
+                partnerHttpMethods.add(req.method)
+                if (req.method == HttpMethod.Get) {
+                    FakeHttpReply(HttpStatusCode.OK, emptyPartnerBlob, ContentType.Application.OctetStream)
+                } else {
+                    FakeHttpReply(HttpStatusCode.Forbidden)
+                }
+            }
+            val partnerDrive = GoogleDriveManager(FakeDriveAuthProvider(), partnerHttpClient, retryBaseDelayMs = 1L)
+
+            try {
+                val ownerTracker = CycleTracker(
+                    rustBridge = com.novarytm.ffi.RustBridge(),
+                    cycleQueries = ownerDb.cycleQueries,
+                    coroutineScope = ownerScope,
+                    isReadOnlyMode = { false }
+                )
+                ownerTracker.logNewPeriodRange(
+                    startDate = LocalDate.parse("2024-06-01"),
+                    endDate = LocalDate.parse("2024-06-04"),
+                    intensity = 3,
+                    notes = "Batch delete test"
+                )
+                awaitCondition { ownerDb.cycleQueries.selectAllEntries().executeAsList().size == 4 }
+                awaitCondition { ownerTracker.loggedDates.value.size == 4 }
+
+                val batchIds = ownerDb.cycleQueries.selectAllEntries().executeAsList().map { it.id }
+                ownerTracker.deleteEntries(batchIds)
+                awaitCondition { ownerDb.cycleQueries.selectAllEntries().executeAsList().isEmpty() }
+                awaitCondition { ownerTracker.loggedDates.value.isEmpty() }
+
+                // 2. Domain Partner write guard: CycleTracker with isReadOnlyMode = { true } rejects all mutations
+                val partnerDb = createInMemoryDb()
+                partnerDb.cycleQueries.insertEntry("2024-06-10", 3, "Synced owner entry", null, 2, "Cramps")
+                val seededEntry = partnerDb.cycleQueries.selectEntryByDate("2024-06-10").executeAsOne()
+
+                val partnerTracker = CycleTracker(
+                    rustBridge = com.novarytm.ffi.RustBridge(),
+                    cycleQueries = partnerDb.cycleQueries,
+                    coroutineScope = partnerScope,
+                    isReadOnlyMode = { true }
+                )
+
+                partnerTracker.logNewPeriod(LocalDate.parse("2024-06-11"), intensity = 4, notes = "Blocked write")
+                partnerTracker.logNewPeriodRange(LocalDate.parse("2024-06-12"), LocalDate.parse("2024-06-14"), intensity = 2)
+                partnerTracker.logSexualRelation(LocalDate.parse("2024-06-10"), "unprotected")
+                partnerTracker.deleteEntry(seededEntry.id)
+                partnerTracker.deleteEntries(listOf(seededEntry.id))
+                delay(120)
+
+                val remainingEntries = partnerDb.cycleQueries.selectAllEntries().executeAsList()
+                assertEquals(1, remainingEntries.size, "Partner CycleTracker must reject all write/delete calls")
+                assertEquals("2024-06-10", remainingEntries[0].date)
+                assertEquals(3, remainingEntries[0].intensity)
+                assertNull(remainingEntries[0].sexualRelations)
+
+                // 3. Partner SyncManager performs 0 outbound POST/PATCH/DELETE calls even if DB mutates directly
+                val partnerStorage = FakeSyncKeyValueStore(
+                    storedUserId = "partner-google-user",
+                    storedTargetSyncId = "shared-owner-file-id",
+                    storedPartnerEmail = "owner@example.com",
+                    storedSyncSecretKey = secretKey
+                )
+                val partnerScheduler = FakeSyncUploadScheduler()
+                val partnerSync = SyncManager(
+                    database = partnerDb,
+                    rustBridge = crypto,
+                    storage = partnerStorage,
+                    googleDriveManager = partnerDrive,
+                    scope = partnerScope,
+                    cycleTracker = partnerTracker,
+                    backgroundSyncScheduler = partnerScheduler
+                )
+
+                // Directly mutate Partner DB and wait past 1000ms reactive observer debounce
+                partnerDb.cycleQueries.insertEntry("2024-06-15", 2, "Direct DB write", null, null, null)
+                delay(1150)
+
+                assertFalse(partnerStorage.hasPendingSyncUpload(), "Partner mode must never mark pendingSyncUpload")
+                assertEquals(0, partnerScheduler.schedulePendingCount, "Partner mode must never schedule background upload")
+                assertNull(partnerSync.prepareAndUploadPayload(), "Partner prepareAndUploadPayload must return null")
+                assertEquals(SyncManager.UploadOutcome.NoOp, partnerSync.executeBackgroundUpload(), "Partner executeBackgroundUpload must be NoOp")
+                assertTrue(partnerSync.flushPendingChanges())
+                assertFalse(partnerSync.revokeAndRegenerate(), "Partner must not delete or revoke Owner Drive blob")
+                assertTrue(partnerSync.manualRefresh(forceResync = true))
+
+                val outboundMutations = partnerHttpMethods.filter {
+                    it == HttpMethod.Post || it == HttpMethod.Patch || it == HttpMethod.Put || it == HttpMethod.Delete
+                }
+                assertTrue(outboundMutations.isEmpty(), "Partner SyncManager must perform 0 POST/PATCH/PUT/DELETE calls; saw $partnerHttpMethods")
+                assertTrue(partnerHttpMethods.all { it == HttpMethod.Get }, "Partner SyncManager may only issue GET pull requests")
+            } finally {
+                ownerScope.cancel()
+                partnerScope.cancel()
+                partnerHttpClient.close()
+            }
+        }
     }
 }

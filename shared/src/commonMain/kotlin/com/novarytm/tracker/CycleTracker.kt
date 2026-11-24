@@ -42,7 +42,8 @@ data class CycleAnalysis(
 class CycleTracker(
     private val rustBridge: RustBridge,
     private val cycleQueries: CycleQueries,
-    private val coroutineScope: CoroutineScope
+    private val coroutineScope: CoroutineScope,
+    var isReadOnlyMode: () -> Boolean = { false }
 ) {
     private val trackerMutex = Mutex()
 
@@ -86,8 +87,10 @@ class CycleTracker(
         painLevel: Int? = null, 
         symptoms: String? = null
     ) {
+        if (isReadOnlyMode()) return
         coroutineScope.launch(Dispatchers.Default) {
             trackerMutex.withLock {
+                if (isReadOnlyMode()) return@withLock
                 val dateStr = date.toString()
                 val existing = cycleQueries.selectEntryByDate(dateStr).executeAsOneOrNull()
                 val validIntensity = intensity.coerceIn(0, 5)
@@ -109,8 +112,10 @@ class CycleTracker(
     }
 
     fun logSexualRelation(date: LocalDate, relation: String?) {
+        if (isReadOnlyMode()) return
         coroutineScope.launch(Dispatchers.Default) {
             trackerMutex.withLock {
+                if (isReadOnlyMode()) return@withLock
                 val dateStr = date.toString()
                 val existing = cycleQueries.selectEntryByDate(dateStr).executeAsOneOrNull()
                 val cleanRelation = relation?.take(50)
@@ -133,8 +138,10 @@ class CycleTracker(
         painLevel: Int? = null,
         symptoms: String? = null
     ) {
+        if (isReadOnlyMode()) return
         coroutineScope.launch(Dispatchers.Default) {
             trackerMutex.withLock {
+                if (isReadOnlyMode()) return@withLock
                 val sanitized = sanitizeNote(notes)
                 val cleanSymptoms = sanitizeSymptoms(symptoms)
                 val validIntensity = intensity.coerceIn(0, 5)
@@ -168,9 +175,26 @@ class CycleTracker(
     }
 
     fun deleteEntry(id: Long) {
+        if (isReadOnlyMode()) return
         coroutineScope.launch(Dispatchers.Default) {
             trackerMutex.withLock {
+                if (isReadOnlyMode()) return@withLock
                 cycleQueries.deleteEntry(id)
+                refreshCycleStateInternal()
+            }
+        }
+    }
+
+    fun deleteEntries(ids: List<Long>) {
+        if (ids.isEmpty() || isReadOnlyMode()) return
+        coroutineScope.launch(Dispatchers.Default) {
+            trackerMutex.withLock {
+                if (isReadOnlyMode()) return@withLock
+                cycleQueries.transaction {
+                    ids.forEach { id ->
+                        cycleQueries.deleteEntry(id)
+                    }
+                }
                 refreshCycleStateInternal()
             }
         }

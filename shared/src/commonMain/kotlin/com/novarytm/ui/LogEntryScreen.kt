@@ -8,9 +8,11 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
@@ -33,7 +35,13 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import com.novarytm.utils.AppStrings
 import kotlin.time.Clock
@@ -133,7 +141,7 @@ fun LogEntryScreen(
         Spacer(Modifier.height(16.dp))
         
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().selectableGroup(),
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
             (0..5).forEach { level ->
@@ -141,6 +149,7 @@ fun LogEntryScreen(
                     level = level,
                     isSelected = selectedIntensity == level,
                     color = periodColor,
+                    enabled = !isReadOnly,
                     modifier = Modifier.weight(1f),
                     onClick = { if (!isReadOnly) selectedIntensity = level }
                 )
@@ -300,21 +309,22 @@ fun IntensityButton(
     level: Int,
     isSelected: Boolean,
     color: Color,
+    enabled: Boolean = true,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     val backgroundColor by animateColorAsState(
-        targetValue = if (isSelected) color else color.copy(alpha = 0.1f),
+        targetValue = if (isSelected) color else color.copy(alpha = 0.08f),
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
         label = "IntensityBackground"
     )
     val contentColor by animateColorAsState(
-        targetValue = if (isSelected) Color.White else color,
+        targetValue = if (isSelected) Color.White else Color(0xFF3E3636),
         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
         label = "IntensityContent"
     )
     val scale by animateFloatAsState(
-        targetValue = if (isSelected) 1.08f else 1.0f,
+        targetValue = if (isSelected) 1.06f else 1.0f,
         animationSpec = spring(
             dampingRatio = Spring.DampingRatioMediumBouncy,
             stiffness = Spring.StiffnessMediumLow
@@ -331,14 +341,44 @@ fun IntensityButton(
         5 -> "Very"
         else -> ""
     }
+    val spokenLabel = when (level) {
+        0 -> "No flow"
+        1 -> "Spotting"
+        2 -> "Light flow"
+        3 -> "Medium flow"
+        4 -> "Heavy flow"
+        5 -> "Very heavy flow"
+        else -> "$flowLabel flow"
+    }
     val selectionState = if (isSelected) "selected" else "not selected"
-    val contentDesc = "$flowLabel flow, level $level, $selectionState"
+    val contentDesc = "$spokenLabel, level $level of 5, $selectionState"
+    val tileShape = RoundedCornerShape(14.dp)
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = modifier.semantics(mergeDescendants = true) {
-            contentDescription = contentDesc
-        }
+        modifier = modifier
+            .minimumInteractiveComponentSize()
+            .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+            .clip(tileShape)
+            .clickable(
+                enabled = enabled,
+                role = Role.RadioButton,
+                onClick = onClick
+            )
+            .clearAndSetSemantics {
+                contentDescription = contentDesc
+                role = Role.RadioButton
+                selected = isSelected
+                if (enabled) {
+                    onClick {
+                        onClick()
+                        true
+                    }
+                } else {
+                    disabled()
+                }
+            }
+            .padding(vertical = 2.dp)
     ) {
         Box(
             modifier = Modifier
@@ -347,23 +387,42 @@ fun IntensityButton(
                     scaleX = scale
                     scaleY = scale
                 }
-                .clip(RoundedCornerShape(14.dp))
+                .clip(tileShape)
                 .background(backgroundColor)
-                .clickable { onClick() },
+                .then(
+                    if (isSelected) {
+                        Modifier.border(2.dp, Color(0xFF3E3636), tileShape)
+                    } else {
+                        Modifier.border(1.dp, color.copy(alpha = 0.45f), tileShape)
+                    }
+                ),
             contentAlignment = Alignment.Center
         ) {
-            Icon(
-                imageVector = if (level == 0) Icons.Outlined.CheckCircle else Icons.Default.WaterDrop,
-                contentDescription = null,
-                tint = contentColor,
-                modifier = Modifier.size(22.dp)
-            )
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    imageVector = if (level == 0) Icons.Outlined.CheckCircle else Icons.Default.WaterDrop,
+                    contentDescription = null,
+                    tint = contentColor,
+                    modifier = Modifier.size(15.dp)
+                )
+                Text(
+                    text = level.toString(),
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = contentColor,
+                    maxLines = 1
+                )
+            }
         }
         Spacer(Modifier.height(4.dp))
         Text(
             text = flowLabel,
-            style = MaterialTheme.typography.labelSmall,
-            color = if (isSelected) color else Color.Gray,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+            ),
+            color = if (isSelected) Color(0xFF3E3636) else Color(0xFF5C5C5C),
             maxLines = 1
         )
     }

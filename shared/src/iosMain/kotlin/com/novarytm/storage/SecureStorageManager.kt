@@ -5,56 +5,56 @@ import platform.CoreFoundation.*
 import platform.Foundation.*
 import platform.Security.*
 
-class SecureStorageManager : com.novarytm.storage.SecureStorageManager {
+actual class SecureStorageManager {
 
-    override fun savePinHash(hash: ByteArray) {
+    actual fun savePinHash(hash: ByteArray) {
         saveString("pin_hash", hash.toBase64String())
     }
 
-    override fun getPinHash(): ByteArray? {
+    actual fun getPinHash(): ByteArray? {
         val base64 = getString("pin_hash") ?: return null
         return base64.fromBase64()
     }
 
-    override fun saveMasterKey(key: ByteArray) {
+    actual fun saveMasterKey(key: ByteArray) {
         saveString("master_key", key.toBase64String())
     }
 
-    override fun getMasterKey(): ByteArray? {
+    actual fun getMasterKey(): ByteArray? {
         val base64 = getString("master_key") ?: return null
         return base64.fromBase64()
     }
 
-    override fun saveUserId(id: String) {
+    actual fun saveUserId(id: String) {
         saveString("user_id", id)
     }
 
-    override fun getUserId(): String? {
+    actual fun getUserId(): String? {
         return getString("user_id")
     }
 
-    override fun saveTargetSyncId(id: String) {
+    actual fun saveTargetSyncId(id: String) {
         saveString("target_sync_id", id)
     }
 
-    override fun getTargetSyncId(): String? {
+    actual fun getTargetSyncId(): String? {
         return getString("target_sync_id")
     }
 
-    override fun saveSyncSecretKey(key: ByteArray) {
+    actual fun saveSyncSecretKey(key: ByteArray) {
         saveString("sync_secret_key", key.toBase64String())
     }
 
-    override fun getSyncSecretKey(): ByteArray? {
+    actual fun getSyncSecretKey(): ByteArray? {
         val base64 = getString("sync_secret_key") ?: return null
         return base64.fromBase64()
     }
 
-    override fun savePartnerEmail(email: String) {
+    actual fun savePartnerEmail(email: String) {
         saveString("partner_email", email)
     }
 
-    override fun getPartnerEmail(): String? {
+    actual fun getPartnerEmail(): String? {
         return getString("partner_email")
     }
 
@@ -75,11 +75,11 @@ class SecureStorageManager : com.novarytm.storage.SecureStorageManager {
     }
 
     // VULN-01 FIX: Derivation salt for Argon2id key derivation
-    override fun saveDerivationSalt(salt: ByteArray) {
+    actual fun saveDerivationSalt(salt: ByteArray) {
         saveString("derivation_salt", salt.toBase64String())
     }
 
-    override fun getDerivationSalt(): ByteArray? {
+    actual fun getDerivationSalt(): ByteArray? {
         val base64 = getString("derivation_salt") ?: return null
         return base64.fromBase64()
     }
@@ -92,11 +92,19 @@ class SecureStorageManager : com.novarytm.storage.SecureStorageManager {
         return getString("theme_preference")
     }
 
-    override fun clearAll() {
+    actual fun clearAll() {
         val query = mutableMapOf<CFTypeRef?, CFTypeRef?>(
             kSecClass to kSecClassGenericPassword
         )
         SecItemDelete(query.toCFDictionary())
+    }
+
+    private fun saveBoolean(key: String, value: Boolean) {
+        saveString(key, value.toString())
+    }
+
+    private fun getBoolean(key: String): Boolean {
+        return getString(key)?.toBooleanStrictOrNull() ?: false
     }
 
     // iOS Keychain Helper Logic
@@ -176,6 +184,64 @@ class SecureStorageManager : com.novarytm.storage.SecureStorageManager {
 
     actual fun savePinLockoutUntil(timestampMs: Long) {
         saveString("pin_lockout_until", timestampMs.toString())
+    }
+
+    actual fun clearLockoutState() {
+        saveString("failed_pin_attempts", "0")
+        saveString("pin_lockout_until", "0")
+    }
+
+    actual fun getSyncCodeFailedAttempts(): Int {
+        return getString("sync_code_failed_attempts")?.toIntOrNull() ?: 0
+    }
+
+    private fun resolveSyncCodeLockoutUntilMs(nowWall: Long, nowMonoMs: Long): Long {
+        val monoUntil = getString("sync_code_lockout_mono")?.toLongOrNull() ?: 0L
+        if (monoUntil > nowMonoMs) {
+            val remainingMs = (monoUntil - nowMonoMs).coerceAtMost(PairingRateLimiter.LOCKOUT_300S_MS)
+            return nowWall + remainingMs
+        }
+        val wallUntil = getString("sync_code_lockout_until")?.toLongOrNull() ?: 0L
+        if (wallUntil > nowWall) {
+            val remainingMs = (wallUntil - nowWall).coerceAtMost(PairingRateLimiter.LOCKOUT_300S_MS)
+            return nowWall + remainingMs
+        }
+        return 0L
+    }
+
+    actual fun recordSyncCodeFailedAttempt(): Long {
+        val attempts = (getSyncCodeFailedAttempts() + 1).coerceAtLeast(1)
+        val nowWall = (NSDate().timeIntervalSince1970 * 1000.0).toLong()
+        val nowMonoMs = (NSProcessInfo.processInfo.systemUptime * 1000.0).toLong()
+        val previousUntilMs = resolveSyncCodeLockoutUntilMs(nowWall, nowMonoMs)
+        val lockUntilWallMs = PairingRateLimiter.computeLockoutUntilMs(
+            failedAttempts = attempts,
+            nowMs = nowWall,
+            previousLockoutUntilMs = previousUntilMs
+        )
+        saveString("sync_code_failed_attempts", attempts.toString())
+        if (lockUntilWallMs > nowWall) {
+            val durationMs = (lockUntilWallMs - nowWall).coerceIn(0L, PairingRateLimiter.LOCKOUT_300S_MS)
+            saveString("sync_code_lockout_until", lockUntilWallMs.toString())
+            saveString("sync_code_lockout_mono", (nowMonoMs + durationMs).toString())
+        } else {
+            saveString("sync_code_lockout_until", "0")
+            saveString("sync_code_lockout_mono", "0")
+        }
+        return lockUntilWallMs
+    }
+
+    actual fun getSyncCodeLockoutRemainingSeconds(): Long {
+        val nowWall = (NSDate().timeIntervalSince1970 * 1000.0).toLong()
+        val nowMonoMs = (NSProcessInfo.processInfo.systemUptime * 1000.0).toLong()
+        val lockUntilMs = resolveSyncCodeLockoutUntilMs(nowWall, nowMonoMs)
+        return PairingRateLimiter.remainingLockoutSeconds(lockUntilMs, nowWall)
+    }
+
+    actual fun resetSyncCodeFailedAttempts() {
+        saveString("sync_code_failed_attempts", "0")
+        saveString("sync_code_lockout_until", "0")
+        saveString("sync_code_lockout_mono", "0")
     }
 
     actual fun saveLastSyncTimestamp(timestampMs: Long) {

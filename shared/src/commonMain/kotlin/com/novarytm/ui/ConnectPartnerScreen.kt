@@ -26,10 +26,17 @@ import kotlin.time.Clock
 
 import com.novarytm.auth.GoogleAuthManager
 import com.novarytm.ffi.RustBridge
+import com.novarytm.storage.SecureStorageManager
 import com.novarytm.sync.SyncManager
 import com.novarytm.utils.AppStrings
-import kotlinx.coroutines.launch
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private const val SYNC_CODE_EXPIRATION_MS = 300_000L // 5 minutes
 
@@ -37,17 +44,39 @@ private const val SYNC_CODE_EXPIRATION_MS = 300_000L // 5 minutes
 @Composable
 fun ConnectPartnerScreen(
     rustBridge: RustBridge,
+    storage: SecureStorageManager,
     googleAuthManager: GoogleAuthManager,
     onIdEntered: (String, ByteArray?) -> Unit,
     onBack: () -> Unit
 ) {
     var syncCodeInput by remember { mutableStateOf("") }
     var errorMessage by remember { mutableStateOf<String?>(null) }
-    var syncCodeAttempts by remember { mutableStateOf(0) }
-    var syncCodeLockedUntil by remember { mutableStateOf(0L) }
+    var lockoutRemainingSeconds by remember { mutableStateOf(storage.getSyncCodeLockoutRemainingSeconds()) }
     var isLoading by remember { mutableStateOf(false) }
     val primaryColor = LocalAppColors.current.primary
     val scope = rememberCoroutineScope()
+
+    LaunchedEffect(lockoutRemainingSeconds > 0L) {
+        while (lockoutRemainingSeconds > 0L) {
+            delay(1_000L)
+            val remaining = storage.getSyncCodeLockoutRemainingSeconds()
+            lockoutRemainingSeconds = remaining
+            if (remaining <= 0L && errorMessage?.startsWith("Too many") == true) {
+                errorMessage = null
+            }
+        }
+    }
+
+    val recordFailedSyncAttempt: (String) -> Unit = { fallbackMessage ->
+        storage.recordSyncCodeFailedAttempt()
+        val remaining = storage.getSyncCodeLockoutRemainingSeconds()
+        lockoutRemainingSeconds = remaining
+        errorMessage = if (remaining > 0L) {
+            "Too many failed attempts. Try again in ${remaining}s."
+        } else {
+            fallbackMessage
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -91,23 +120,50 @@ fun ConnectPartnerScreen(
             Text(
                 AppStrings.get("paste_code_instruction"),
                 style = MaterialTheme.typography.bodyMedium,
-                color = Color.Gray,
+                color = Color(0xFF5C5C5C),
                 textAlign = TextAlign.Center
             )
 
-            Spacer(Modifier.height(48.dp))
+            Spacer(Modifier.height(12.dp))
+
+            Text(
+                "When prompted, sign in with the exact Google account email authorized by your partner. One-time pairing codes expire 5:00 after generation.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF5C5C5C),
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(Modifier.height(36.dp))
+
+            val activeSupportMessage = if (lockoutRemainingSeconds > 0L) {
+                "Too many failed attempts. Try again in ${lockoutRemainingSeconds}s."
+            } else {
+                errorMessage
+            }
 
             OutlinedTextField(
                 value = syncCodeInput,
                 onValueChange = { 
                     syncCodeInput = it
-                    errorMessage = null
+                    if (lockoutRemainingSeconds <= 0L) {
+                        errorMessage = null
+                    }
                 },
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text(AppStrings.get("sync_code_field")) },
                 singleLine = true,
-                isError = errorMessage != null,
-                supportingText = { errorMessage?.let { Text(it) } },
+                enabled = !isLoading && lockoutRemainingSeconds <= 0L,
+                isError = activeSupportMessage != null,
+                supportingText = {
+                    activeSupportMessage?.let { msg ->
+                        Text(
+                            text = msg,
+                            modifier = Modifier.semantics {
+                                liveRegion = LiveRegionMode.Polite
+                            }
+                        )
+                    }
+                },
                 shape = RoundedCornerShape(16.dp),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = primaryColor,
@@ -122,32 +178,26 @@ fun ConnectPartnerScreen(
                     scope.launch {
                         isLoading = true
                         try {
-                            val rateLimitNow = Clock.System.now().toEpochMilliseconds()
-                            if (syncCodeAttempts >= 3 && rateLimitNow < syncCodeLockedUntil) {
-                                errorMessage = "Too many attempts. Please wait 30 seconds."
+                            val currentLockout = storage.getSyncCodeLockoutRemainingSeconds()
+                            if (currentLockout > 0L) {
+                                lockoutRemainingSeconds = currentLockout
+                                errorMessage = "Too many failed attempts. Try again in ${currentLockout}s."
                                 return@launch
                             }
                             val cleanInput = syncCodeInput.trim()
                             val colonIndex = cleanInput.indexOf(':')
                             if (colonIndex == -1) {
-                                syncCodeAttempts++
-                                if (syncCodeAttempts >= 3) {
-                                    syncCodeLockedUntil = Clock.System.now().toEpochMilliseconds() + 30_000L
-                                }
-                                errorMessage = AppStrings.get("invalid_format")
+                                recordFailedSyncAttempt(AppStrings.get("invalid_format"))
                                 return@launch
                             }
                             val ephemeralKey = cleanInput.substring(0, colonIndex)
                             val ciphertext = cleanInput.substring(colonIndex + 1)
 
-                            @OptIn(ExperimentalEncodingApi::class)
-                            val decoded = rustBridge.decryptFromSync(ciphertext, ephemeralKey)
+                            val decoded = withContext(Dispatchers.Default) {
+                                rustBridge.decryptFromSync(ciphertext, ephemeralKey)
+                            }
                             if (decoded.isEmpty()) {
-                                syncCodeAttempts++
-                                if (syncCodeAttempts >= 3) {
-                                    syncCodeLockedUntil = Clock.System.now().toEpochMilliseconds() + 30_000L
-                                }
-                                errorMessage = AppStrings.get("invalid_code")
+                                recordFailedSyncAttempt(AppStrings.get("invalid_code"))
                                 return@launch
                             }
                             val parts = decoded.split("|")
@@ -161,8 +211,12 @@ fun ConnectPartnerScreen(
                                 
                                 // 5 minutes (with asymmetric clock skew protection: up to 60s future skew)
                                 if (timestamp != null && (now - timestamp) in -60_000L..SYNC_CODE_EXPIRATION_MS) {
-                                    syncCodeAttempts = 0
-                                    val keyBytes = Base64.Default.decode(encryptionKeyBase64)
+                                    @OptIn(ExperimentalEncodingApi::class)
+                                    val keyBytes = withContext(Dispatchers.Default) {
+                                        Base64.Default.decode(encryptionKeyBase64)
+                                    }
+                                    storage.resetSyncCodeFailedAttempts()
+                                    lockoutRemainingSeconds = 0L
 
                                     // Require successful Google Sign-In before completing pairing
                                     val signedIn = googleAuthManager.signIn()
@@ -173,26 +227,15 @@ fun ConnectPartnerScreen(
                                         errorMessage = AppStrings.get("auth_cancelled")
                                     }
                                 } else {
-                                    syncCodeAttempts++
-                                    if (syncCodeAttempts >= 3) {
-                                        syncCodeLockedUntil = Clock.System.now().toEpochMilliseconds() + 30_000L
-                                    }
-                                    errorMessage = AppStrings.get("expired_code")
+                                    recordFailedSyncAttempt(AppStrings.get("expired_code"))
                                 }
                             } else {
-                                syncCodeAttempts++
-                                if (syncCodeAttempts >= 3) {
-                                    syncCodeLockedUntil = Clock.System.now().toEpochMilliseconds() + 30_000L
-                                }
-                                errorMessage = AppStrings.get("invalid_format")
+                                recordFailedSyncAttempt(AppStrings.get("invalid_format"))
                             }
-                        } catch (e: Exception) {
-                            if (e is kotlinx.coroutines.CancellationException) throw e
-                            syncCodeAttempts++
-                            if (syncCodeAttempts >= 3) {
-                                syncCodeLockedUntil = Clock.System.now().toEpochMilliseconds() + 30_000L
-                            }
-                            errorMessage = AppStrings.get("invalid_code")
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Exception) {
+                            recordFailedSyncAttempt(AppStrings.get("invalid_code"))
                         } finally {
                             isLoading = false
                         }
@@ -201,10 +244,12 @@ fun ConnectPartnerScreen(
                 modifier = Modifier.fillMaxWidth().height(56.dp),
                 shape = RoundedCornerShape(16.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = primaryColor),
-                enabled = !isLoading
+                enabled = !isLoading && lockoutRemainingSeconds <= 0L
             ) {
                 if (isLoading) {
                     CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp))
+                } else if (lockoutRemainingSeconds > 0L) {
+                    Text("Locked (${lockoutRemainingSeconds}s)", style = MaterialTheme.typography.titleMedium)
                 } else {
                     Text(AppStrings.get("connect_button"), style = MaterialTheme.typography.titleMedium)
                 }

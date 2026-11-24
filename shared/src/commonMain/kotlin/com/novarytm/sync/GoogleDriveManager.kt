@@ -27,10 +27,50 @@ data class DriveFileAppFolder(val id: String, val name: String)
 @Serializable
 data class DriveFileListAppFolder(val files: List<DriveFileAppFolder> = emptyList())
 
+interface DriveAuthProvider {
+    val needsInteractiveReauth: Boolean
+    suspend fun getAccessToken(scopes: List<String>): String?
+    suspend fun clearToken(token: String)
+}
+
+internal class GoogleAuthDriveProvider(
+    private val authManager: GoogleAuthManager
+) : DriveAuthProvider {
+    override val needsInteractiveReauth: Boolean
+        get() = authManager.needsInteractiveReauth
+
+    override suspend fun getAccessToken(scopes: List<String>): String? =
+        authManager.getAccessToken(scopes)
+
+    override suspend fun clearToken(token: String) =
+        authManager.clearToken(token)
+}
+
+interface DriveBlobClient {
+    suspend fun pushSyncBlob(
+        encryptedData: ByteArray,
+        preferredFileId: String? = null,
+        partnerEmail: String? = null,
+        onPreferredFileNotFound: (() -> Unit)? = null
+    ): String?
+
+    suspend fun pullSyncBlob(): String?
+
+    suspend fun downloadPublicSyncBlob(fileId: String): String?
+
+    suspend fun deleteSyncBlob(): Boolean
+}
+
 class GoogleDriveManager(
-    private val authManager: GoogleAuthManager,
-    private val httpClient: HttpClient
-) {
+    private val authProvider: DriveAuthProvider,
+    private val httpClient: HttpClient,
+    private val retryBaseDelayMs: Long = 1000L
+) : DriveBlobClient {
+    constructor(
+        authManager: GoogleAuthManager,
+        httpClient: HttpClient,
+        retryBaseDelayMs: Long = 1000L
+    ) : this(GoogleAuthDriveProvider(authManager), httpClient, retryBaseDelayMs)
     private val driveBaseUrl = "https://www.googleapis.com/drive/v3/files"
     private val driveUploadUrl = "https://www.googleapis.com/upload/drive/v3/files"
     // Use restricted drive.file scope matching the OAuth login flow
@@ -60,12 +100,12 @@ class GoogleDriveManager(
         val storageQuota: StorageQuota? = null
     )
 
-    private suspend fun getAuthToken(): String? = authManager.getAccessToken(scopes)
+    private suspend fun getAuthToken(): String? = authProvider.getAccessToken(scopes)
 
     private suspend fun getRequiredAuthToken(): String {
         val token = getAuthToken()
         if (token != null) return token
-        if (authManager.needsInteractiveReauth) {
+        if (authProvider.needsInteractiveReauth) {
             throw DriveAuthRequiredException("Google Drive authorization expired or missing")
         }
         throw DriveSyncException("Unable to obtain Google Drive token; check network connection", isRetryable = true)
@@ -74,7 +114,7 @@ class GoogleDriveManager(
     private suspend fun checkAndClearTokenIfUnauthorized(response: HttpResponse, token: String?) {
         if (response.status == HttpStatusCode.Unauthorized && token != null) {
             try {
-                authManager.clearToken(token)
+                authProvider.clearToken(token)
             } catch (_: Exception) {
                 // ignore
             }
@@ -88,11 +128,11 @@ class GoogleDriveManager(
         var currentToken = initialToken
         var response = request(currentToken)
         if (response.status == HttpStatusCode.Unauthorized) {
-            authManager.clearToken(currentToken)
+            authProvider.clearToken(currentToken)
             currentToken = getRequiredAuthToken()
             response = request(currentToken)
             if (response.status == HttpStatusCode.Unauthorized) {
-                authManager.clearToken(currentToken)
+                authProvider.clearToken(currentToken)
                 throw DriveAuthRequiredException("Drive API returned 401 Unauthorized after token refresh")
             }
         }
@@ -150,11 +190,11 @@ class GoogleDriveManager(
         return activeToken
     }
 
-    suspend fun pushSyncBlob(
+    override suspend fun pushSyncBlob(
         encryptedData: ByteArray,
-        preferredFileId: String? = null,
-        partnerEmail: String? = null,
-        onPreferredFileNotFound: (() -> Unit)? = null
+        preferredFileId: String?,
+        partnerEmail: String?,
+        onPreferredFileNotFound: (() -> Unit)?
     ): String? = withContext(Dispatchers.Default) {
         var currentPreferredId = preferredFileId
 
@@ -290,10 +330,10 @@ class GoogleDriveManager(
 
     private suspend fun <T> retryWithBackoff(
         maxAttempts: Int = 3,
-        initialDelayMs: Long = 1000L,
+        initialDelayMs: Long = retryBaseDelayMs,
         block: suspend () -> T
     ): T {
-        var delayMs = initialDelayMs
+        var delayMs = initialDelayMs.coerceAtLeast(0L)
         var lastException: Exception? = null
         for (attempt in 1..maxAttempts) {
             try {
@@ -311,7 +351,9 @@ class GoogleDriveManager(
                 if (attempt == maxAttempts) throw e
                 lastException = e
             }
-            delay(delayMs)
+            if (delayMs > 0L) {
+                delay(delayMs)
+            }
             delayMs *= 2
         }
         throw lastException ?: DriveSyncException("Operation failed after $maxAttempts attempts")
@@ -357,7 +399,7 @@ class GoogleDriveManager(
         }
     }
 
-    suspend fun pullSyncBlob(): String? = withContext(Dispatchers.Default) {
+    override suspend fun pullSyncBlob(): String? = withContext(Dispatchers.Default) {
         retryWithBackoff {
             val token = getRequiredAuthToken()
             val (fileId, searchToken) = findSyncBlobWithToken(token)
@@ -388,7 +430,7 @@ class GoogleDriveManager(
         }
     }
 
-    suspend fun downloadPublicSyncBlob(fileId: String): String? = withContext(Dispatchers.Default) {
+    override suspend fun downloadPublicSyncBlob(fileId: String): String? = withContext(Dispatchers.Default) {
         if (!fileId.matches(Regex("^[a-zA-Z0-9_-]+$"))) {
             return@withContext null
         }
@@ -427,7 +469,7 @@ class GoogleDriveManager(
                 }
             }
             if (response.status == HttpStatusCode.Unauthorized) {
-                if (token != null) authManager.clearToken(token)
+                if (token != null) authProvider.clearToken(token)
                 throw DriveAuthRequiredException("Access to shared Google Drive file requires authorization (401)")
             }
             if (isHtmlContentType(response)) {
@@ -481,7 +523,7 @@ class GoogleDriveManager(
         findSyncBlobWithToken(token, name).first
     }
 
-    suspend fun deleteSyncBlob(): Boolean = withContext(Dispatchers.Default) {
+    override suspend fun deleteSyncBlob(): Boolean = withContext(Dispatchers.Default) {
         retryWithBackoff {
             val token = getRequiredAuthToken()
             val (fileId, searchToken) = findSyncBlobWithToken(token)

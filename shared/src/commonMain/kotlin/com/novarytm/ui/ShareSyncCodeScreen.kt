@@ -27,7 +27,12 @@ import com.novarytm.auth.GoogleAuthManager
 import com.novarytm.db.BirthControl
 import com.novarytm.db.CycleEntry
 import com.novarytm.utils.AppStrings
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -42,14 +47,15 @@ fun ShareSyncCodeScreen(
     onBack: () -> Unit,
     onOpenPermissions: () -> Unit
 ) {
-    var secretKey by remember { mutableStateOf<ByteArray?>(storage.getSyncSecretKey()) }
+    var secretKey by remember { mutableStateOf<ByteArray?>(null) }
     val primaryColor = LocalAppColors.current.primary
-    val clipboardManager = LocalClipboardManager.current
     var showCopiedToast by remember { mutableStateOf(false) }
     
     var syncCode by remember { mutableStateOf<String?>(null) }
+    var codeRemainingSeconds by remember { mutableStateOf(0) }
     var isGenerating by remember { mutableStateOf(false) }
     var isRevoking by remember { mutableStateOf(false) }
+    var showRevokeConfirmDialog by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var partnerEmail by remember { mutableStateOf(storage.getPartnerEmail() ?: "") }
     var isPaired by remember {
@@ -57,16 +63,96 @@ fun ShareSyncCodeScreen(
     }
     val scope = rememberCoroutineScope()
 
+    DisposableEffect(Unit) {
+        onDispose {
+            secretKey?.fill(0)
+        }
+    }
+
     LaunchedEffect(Unit) {
-        if (secretKey == null) {
-            val newKey = rustBridge.generateRandomKey()
-            if (newKey.isNotEmpty()) {
-                storage.saveSyncSecretKey(newKey)
-                secretKey = newKey
-            } else {
-                errorMessage = "Failed to generate a secure key."
+        val loadedKey = withContext(Dispatchers.Default) {
+            storage.getSyncSecretKey() ?: rustBridge.generateRandomKey().also { generated ->
+                if (generated.isNotEmpty()) {
+                    storage.saveSyncSecretKey(generated)
+                }
             }
         }
+        if (loadedKey.isNotEmpty()) {
+            secretKey?.fill(0)
+            secretKey = loadedKey
+        } else {
+            errorMessage = "Unable to generate a secure sync key. Please try again."
+        }
+    }
+
+    LaunchedEffect(syncCode) {
+        if (syncCode != null) {
+            codeRemainingSeconds = 300
+            while (codeRemainingSeconds > 0) {
+                delay(1_000L)
+                codeRemainingSeconds--
+            }
+        } else {
+            codeRemainingSeconds = 0
+        }
+    }
+
+    if (showRevokeConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { if (!isRevoking) showRevokeConfirmDialog = false },
+            containerColor = LocalAppColors.current.surface,
+            title = { Text("Revoke Partner Access?") },
+            text = {
+                Text(
+                    "This immediately disconnects your partner, deletes the shared sync file from Google Drive, and rotates your encryption key. Ongoing partner sync will stop until you generate and share a new code."
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !isRevoking,
+                    onClick = {
+                        showRevokeConfirmDialog = false
+                        isRevoking = true
+                        scope.launch {
+                            try {
+                                val success = withContext(Dispatchers.Default) {
+                                    syncManager?.revokeAndRegenerate() == true
+                                }
+                                if (success) {
+                                    secretKey?.fill(0)
+                                    secretKey = withContext(Dispatchers.Default) {
+                                        storage.getSyncSecretKey()
+                                    }
+                                    syncCode = null
+                                    errorMessage = null
+                                    isPaired = false
+                                    partnerEmail = ""
+                                    storage.savePartnerEmail("")
+                                } else {
+                                    errorMessage = "Unable to revoke partner access right now. Please check your connection and try again."
+                                }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (_: Exception) {
+                                errorMessage = "Unable to revoke partner access right now. Please check your connection and try again."
+                            } finally {
+                                isRevoking = false
+                            }
+                        }
+                    }
+                ) {
+                    Text("Revoke Access", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !isRevoking,
+                    onClick = { showRevokeConfirmDialog = false }
+                ) {
+                    Text("Cancel", color = Color(0xFF5C5C5C))
+                }
+            }
+        )
     }
 
     Scaffold(
@@ -101,31 +187,58 @@ fun ShareSyncCodeScreen(
             Text(
                 AppStrings.get("sign_in_instruction"),
                 style = MaterialTheme.typography.bodyMedium,
-                color = Color.Gray,
+                color = Color(0xFF5C5C5C),
                 textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 8.dp, bottom = 24.dp)
+                modifier = Modifier.padding(top = 8.dp, bottom = 12.dp)
+            )
+            Text(
+                "Note: The one-time pairing code expires in 5:00. Once paired, Partner sync stays active continuously until you tap Revoke Access.",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF5C5C5C),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 8.dp).padding(bottom = 20.dp)
             )
 
             val performSignInAndUpload = {
                 scope.launch {
                     isGenerating = true
+                    errorMessage = null
                     try {
                         val success = googleAuthManager.signIn()
                         if (success) {
                             storage.savePartnerEmail(partnerEmail.trim())
-                            // 1. Prepare and Upload payload AFTER sign in
-                            val uploadedFileId = syncManager?.prepareAndUploadPayload()
+                            // 1. Prepare and Upload payload AFTER sign in (offloaded off Main thread)
+                            val uploadedFileId = withContext(Dispatchers.Default) {
+                                syncManager?.prepareAndUploadPayload()
+                            }
                             if (uploadedFileId == null) {
-                                errorMessage = AppStrings.get("failed_upload") + " (prepareAndUploadPayload returned null)"
+                                errorMessage = AppStrings.get("failed_upload")
                             } else {
-                                isPaired = true
-                                syncCode = syncManager?.generateEphemeralPayload(uploadedFileId)?.decodeToString()
+                                val generatedCode = withContext(Dispatchers.Default) {
+                                    val payloadBytes = syncManager?.generateEphemeralPayload(uploadedFileId)
+                                    payloadBytes?.let { bytes ->
+                                        try {
+                                            bytes.decodeToString()
+                                        } finally {
+                                            bytes.fill(0)
+                                        }
+                                    }
+                                }
+                                if (generatedCode.isNullOrEmpty()) {
+                                    errorMessage = "Could not generate a pairing code. Please try again."
+                                } else {
+                                    isPaired = true
+                                    showCopiedToast = false
+                                    syncCode = generatedCode
+                                }
                             }
                         } else {
                             errorMessage = AppStrings.get("auth_cancelled")
                         }
-                    } catch (e: Exception) {
-                        errorMessage = AppStrings.get("failed_upload") + "\nException: ${e.message}"
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        errorMessage = AppStrings.get("failed_upload")
                     } finally {
                         isGenerating = false
                     }
@@ -142,7 +255,7 @@ fun ShareSyncCodeScreen(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            errorMessage ?: "Error",
+                            errorMessage ?: "Something went wrong. Please try again.",
                             color = MaterialTheme.colorScheme.onErrorContainer,
                             style = MaterialTheme.typography.bodySmall,
                             textAlign = TextAlign.Center
@@ -159,6 +272,8 @@ fun ShareSyncCodeScreen(
             }
 
             if (syncCode != null) {
+                val mins = codeRemainingSeconds / 60
+                val secs = (codeRemainingSeconds % 60).toString().padStart(2, '0')
                 Card(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                     colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -168,31 +283,43 @@ fun ShareSyncCodeScreen(
                         modifier = Modifier.padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Text(AppStrings.get("sync_code_label"), style = MaterialTheme.typography.labelMedium, color = Color.Gray)
+                        Text(AppStrings.get("sync_code_label"), style = MaterialTheme.typography.labelMedium, color = Color(0xFF5C5C5C))
                         Spacer(Modifier.height(8.dp))
                         // The Sync Code is now a very long Base64 string. Use maxLines/ellipsis or small text.
                         Text(syncCode ?: "", style = MaterialTheme.typography.bodySmall, color = primaryColor, textAlign = TextAlign.Center, maxLines = 4)
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            text = if (codeRemainingSeconds > 0) {
+                                "One-time pairing code expires in $mins:$secs"
+                            } else {
+                                "One-time pairing code expired (5:00 limit reached)"
+                            },
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                            color = if (codeRemainingSeconds > 0) Color(0xFF3E3636) else MaterialTheme.colorScheme.error,
+                            textAlign = TextAlign.Center
+                        )
                     }
                 }
                 
                 Spacer(Modifier.height(16.dp))
                 Text(
-                    "This code contains a secure link. Please use the Copy button and send it via a secure messaging app.",
+                    "Copy and send this one-time code via a secure messenger. Your partner must sign in with ${partnerEmail.trim().ifBlank { "their authorized Google email" }} within 5:00. After pairing, Partner sync stays active until you tap Revoke Access.",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.Gray,
+                    color = Color(0xFF5C5C5C),
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(horizontal = 16.dp)
                 )
                 Spacer(Modifier.height(16.dp))
 
                 Button(
+                    enabled = codeRemainingSeconds > 0,
                     onClick = { 
                         syncCode?.let { storage.copyToClipboardSecurely(it) }
                         showCopiedToast = true
                         // VULN-06 FIX: Auto-clear clipboard after 60s to limit secret key exposure
                         // Bind to application-level scope so it survives screen dismissal
-                        (syncManager?.scope ?: kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default)).launch {
-                            kotlinx.coroutines.delay(60_000)
+                        (syncManager?.scope ?: CoroutineScope(Dispatchers.Default)).launch {
+                            delay(60_000)
                             storage.copyToClipboardSecurely("")
                         }
                     },
@@ -207,12 +334,18 @@ fun ShareSyncCodeScreen(
             } else if (errorMessage == null) {
                 if (isGenerating) {
                     CircularProgressIndicator(color = primaryColor, modifier = Modifier.padding(32.dp))
-                    Text(AppStrings.get("signing_in"), color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                    Text(AppStrings.get("signing_in"), color = Color(0xFF5C5C5C), style = MaterialTheme.typography.bodySmall)
                 } else {
                     OutlinedTextField(
                         value = partnerEmail,
                         onValueChange = { partnerEmail = it },
                         label = { Text("Partner's Google Email") },
+                        supportingText = {
+                            Text(
+                                "Google Drive restricts sync access to this exact email. Ask your partner to sign in with this same Google account.",
+                                color = Color(0xFF5C5C5C)
+                            )
+                        },
                         modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
                         singleLine = true
                     )
@@ -235,25 +368,7 @@ fun ShareSyncCodeScreen(
                     CircularProgressIndicator(color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
                 } else {
                     Button(
-                        onClick = {
-                            isRevoking = true
-                            scope.launch {
-                                try {
-                                    val success = syncManager?.revokeAndRegenerate() == true
-                                    if (success) {
-                                        syncCode = null
-                                        errorMessage = null
-                                        isPaired = false
-                                        partnerEmail = ""
-                                        storage.savePartnerEmail("")
-                                    } else {
-                                        errorMessage = "Failed to revoke access. Please try again."
-                                    }
-                                } finally {
-                                    isRevoking = false
-                                }
-                            }
-                        },
+                        onClick = { showRevokeConfirmDialog = true },
                         modifier = Modifier.fillMaxWidth().height(56.dp),
                         shape = RoundedCornerShape(16.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)

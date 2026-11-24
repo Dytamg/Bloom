@@ -111,8 +111,10 @@ fun App(
     
     val cycleQueries = database.cycleQueries
     val coroutineScope = rememberCoroutineScope { GlobalExceptionHandler }
-    val cycleTracker = remember(rustBridge, cycleQueries, coroutineScope) { 
-        CycleTracker(rustBridge, cycleQueries, coroutineScope) 
+    val cycleTracker = remember(rustBridge, cycleQueries, coroutineScope, storage) { 
+        CycleTracker(rustBridge, cycleQueries, coroutineScope).apply {
+            isReadOnlyMode = { storage.getTargetSyncId() != null && storage.getUserId() == null }
+        }
     }
 
     val googleAuthManager = rememberGoogleAuthManager(storage)
@@ -398,6 +400,7 @@ fun AppContent(
                 )
                 is OnboardingStage.ConnectPartner -> ConnectPartnerScreen(
                     rustBridge = rustBridge,
+                    storage = storage,
                     googleAuthManager = googleAuthManager,
                     onIdEntered = { id, key -> onOnboardingStageChange(OnboardingStage.CreatePin(id, isPartner = true, secretKey = key)) },
                     onBack = { onOnboardingStageChange(OnboardingStage.Welcome) }
@@ -447,8 +450,10 @@ fun AppContent(
                 pinHash = storage.getPinHash(),
                 onUnlocked = { sessionManager.unlock() },
                 onReset = { 
-
+                    backgroundSyncScheduler?.cancelPartnerPull()
                     cycleQueries.deleteAllEntries()
+                    cycleQueries.deleteAllPregnancyTests()
+                    cycleQueries.deleteAllReminders()
                     cycleQueries.deleteBirthControl()
                     sessionManager.reset() 
                 }
@@ -834,7 +839,22 @@ fun AppContent(
                                     partnerPerms = partnerPerms,
                                     onSyncComplete = { permsVersion++ },
                                     queries = cycleQueries,
-                                    onLogClick = { onShowLogScreenChange(true) },
+                                    onLogClick = {
+                                        if (latestEntries.none { (it.intensity ?: 0) > 0 }) {
+                                            val todayStr = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()).date.toString()
+                                            editingEntry = CycleEntry(
+                                                id = 0L,
+                                                date = todayStr,
+                                                intensity = 3,
+                                                notes = "",
+                                                sexualRelations = null,
+                                                painLevel = null,
+                                                symptoms = ""
+                                            )
+                                            editingEndDate = todayStr
+                                        }
+                                        onShowLogScreenChange(true)
+                                    },
                                     onSettingsClick = { 
                                         if (state.isPartner) {
                                             onScreenChange(Screen.PartnerSettings)
@@ -844,7 +864,8 @@ fun AppContent(
                                     },
                                     onPairClick = { onScreenChange(Screen.ShareSyncCode) },
                                     currentThemeName = currentThemeName,
-                                    onThemeChange = onThemeChange
+                                    onThemeChange = onThemeChange,
+                                    notificationScheduler = notificationScheduler
                                 )
                                 is Screen.Calendar -> {
                                     val hasCalPerms = partnerPerms.shareCyclePhase || partnerPerms.shareFlowIntensity || partnerPerms.shareSymptomsMoods || partnerPerms.shareSexualActivity
@@ -861,7 +882,8 @@ fun AppContent(
                                                 editingEntry = entry
                                                 editingEndDate = end
                                             },
-                                            onDeleteEntry = if (state.isPartner) {{ /* read-only */ }} else {{ cycleTracker.deleteEntry(it) }}
+                                            onDeleteEntry = if (state.isPartner) {{ /* read-only */ }} else {{ cycleTracker.deleteEntry(it) }},
+                                            onDeleteEntries = if (state.isPartner) {{ /* read-only */ }} else {{ cycleTracker.deleteEntries(it) }}
                                         )
                                     }
                                 }
@@ -881,7 +903,12 @@ fun AppContent(
                                                 }
                                                 cycleQueries.selectAllReminders().executeAsList()
                                                     .filter { it.type != "Pregnancy Test" }
-                                                    .forEach { cycleQueries.deleteReminder(it.id) }
+                                                    .forEach { reminder ->
+                                                        notificationScheduler.cancelNotification(
+                                                            com.novarytm.notifications.reminderNotificationId(reminder.type, reminder.frequency)
+                                                        )
+                                                        cycleQueries.deleteReminder(reminder.id)
+                                                    }
                                             } },
                                             isPartner = state.isPartner,
                                             partnerPerms = partnerPerms,
