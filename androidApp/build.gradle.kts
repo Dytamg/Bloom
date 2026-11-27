@@ -20,12 +20,16 @@ fun releaseCredential(propKey: String, envKey: String): String? =
 
 val releaseStoreFilePath = releaseCredential("storeFile", "RELEASE_STORE_FILE")
     ?: releaseCredential("RELEASE_STORE_FILE", "RELEASE_STORE_FILE")
+    ?: System.getenv("UPLOAD_KEYSTORE_PATH")
 val releaseStorePassword = releaseCredential("storePassword", "RELEASE_STORE_PASSWORD")
     ?: releaseCredential("RELEASE_STORE_PASSWORD", "RELEASE_STORE_PASSWORD")
+    ?: System.getenv("KEYSTORE_PASSWORD")
 val releaseKeyAlias = releaseCredential("keyAlias", "RELEASE_KEY_ALIAS")
     ?: releaseCredential("RELEASE_KEY_ALIAS", "RELEASE_KEY_ALIAS")
+    ?: System.getenv("KEY_ALIAS")
 val releaseKeyPassword = releaseCredential("keyPassword", "RELEASE_KEY_PASSWORD")
     ?: releaseCredential("RELEASE_KEY_PASSWORD", "RELEASE_KEY_PASSWORD")
+    ?: System.getenv("KEY_PASSWORD")
 
 val resolvedReleaseStoreFile = releaseStoreFilePath?.let { path ->
     val candidate = file(path)
@@ -72,7 +76,7 @@ val resolvedNdkVersion: String? = resolvedNdkDirectory?.let { dir ->
 }
 
 android {
-    namespace = "com.novarytm.android"
+    namespace = "com.bloom.android"
     compileSdk = 36
 
     if (resolvedNdkDirectory != null && resolvedNdkVersion != null) {
@@ -82,12 +86,12 @@ android {
         ndkVersion = "27.0.12077973"
     }
 
-    defaultConfig {
-        applicationId = "com.novarytm.android"
+        defaultConfig {
+        applicationId = "com.bloom.android"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = System.getenv("BLOOM_VERSION_CODE")?.toIntOrNull() ?: 1
+        versionName = System.getenv("BLOOM_VERSION_NAME") ?: "1.0"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -137,7 +141,7 @@ android {
 val copyComposeAssets = tasks.register<Copy>("copyComposeAssets") {
     dependsOn(":shared:prepareComposeResourcesTaskForCommonMain")
     from(project(":shared").layout.buildDirectory.dir("generated/compose/resourceGenerator/preparedResources/commonMain/composeResources"))
-    into(layout.buildDirectory.dir("generated/composeAssets/composeResources/novarytm.shared.generated.resources"))
+    into(layout.buildDirectory.dir("generated/composeAssets/composeResources/bloom.shared.generated.resources"))
 }
 
 tasks.matching { it.name.startsWith("generate") && it.name.endsWith("Assets") }.configureEach {

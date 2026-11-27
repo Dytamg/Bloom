@@ -17,7 +17,7 @@ kotlin {
     }
 
     android {
-        namespace = "com.novarytm.shared"
+        namespace = "com.bloom.shared"
         compileSdk = 36
         minSdk = 24
         
@@ -34,16 +34,7 @@ kotlin {
         }
     }
     
-    listOf(
-        iosX64(),
-        iosArm64(),
-        iosSimulatorArm64()
-    ).forEach {
-        it.binaries.framework {
-            baseName = "shared"
-            isStatic = true
-        }
-    }
+    
 
     sourceSets {
         commonMain.dependencies {
@@ -81,29 +72,30 @@ kotlin {
             api("androidx.core:core-ktx:1.13.0")
             api("androidx.graphics:graphics-path:1.0.1")
             api("androidx.biometric:biometric:1.1.0")
-            api("androidx.security:security-crypto:1.1.0")
+            
             implementation("androidx.lifecycle:lifecycle-runtime-compose:2.10.0")
             implementation("io.ktor:ktor-client-android:3.5.0")
             
             // Google Sign In
-            implementation("com.google.android.gms:play-services-auth:21.0.0")
+            implementation("com.google.android.gms:play-services-auth:21.3.0")
+            implementation("androidx.credentials:credentials:1.5.0")
+            implementation("androidx.credentials:credentials-play-services-auth:1.5.0")
+            implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
 
             // WorkManager for reliable background sync uploads
             implementation("androidx.work:work-runtime-ktx:2.11.2")
         }
-        iosMain.dependencies {
-            implementation("app.cash.sqldelight:native-driver:2.0.2")
-            implementation("io.ktor:ktor-client-darwin:3.5.0")
-        }
+        
         commonTest.dependencies {
             implementation(kotlin("test"))
+            implementation("io.ktor:ktor-client-mock:3.5.0")
         }
     }
 }
 
 sqldelight {
-    databases.register("NovarytmDatabase") {
-        packageName.set("com.novarytm.db")
+    databases.register("BloomDatabase") {
+        packageName.set("com.bloom.db")
     }
 }
 

@@ -11,6 +11,6 @@ plugins {
 
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
-rootProject.name = "novarytm"
+rootProject.name = "bloom"
 include(":shared")
 include(":androidApp")

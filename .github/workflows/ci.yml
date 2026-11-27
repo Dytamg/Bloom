@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Install cargo-ndk and cargo-audit
+        run: |
+          cargo install cargo-ndk cargo-audit
+
+      - name: Build Rust libs for 4 ABIs and verify 16KB alignment
+        run: |
+          cd rust_core
+          cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -t x86 -o ../shared/src/androidMain/jniLibs build --release
+          for so in ../shared/src/androidMain/jniLibs/*/libbloom_core.so; do
+            if [ -f "$so" ]; then
+              echo "Checking alignment for $so"
+              readelf -l "$so" | grep LOAD
+            fi
+          done
+
+      - name: Run Cargo Test & Clippy & Audit
+        run: |
+          cd rust_core
+          cargo test --release
+          cargo clippy --release -- -D warnings
+          cargo audit
+
+      - name: Run UB Gate Quality Python Check
+        run: |
+          python3 scripts/ub_gate.py --max-crap 10 --max-dup 0.80
+
+      - name: Run Gradle Unit Tests and Lint
+        run: |
+          ./gradlew :shared:allTests :androidApp:lintRelease :androidApp:bundleRelease
+
+      - name: Run Trivy Security Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scanners: 'vuln,secret'
+          exit-code: '1'
+          severity: 'CRITICAL,HIGH'

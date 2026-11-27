@@ -61,3 +61,7 @@ credentials.json
 *.jks
 
 
+
+# Keystores and service accounts
+*.p12
+play-service-account*.json

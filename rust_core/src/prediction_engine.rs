@@ -54,7 +54,7 @@ pub fn predict_irregular_cycle(historical_lengths: &[u32]) -> CyclePrediction {
     let mut sorted_lengths = historical_lengths.to_vec();
     sorted_lengths.sort_unstable();
     
-    let median = if sorted_lengths.len() % 2 == 0 {
+    let median = if sorted_lengths.len().is_multiple_of(2) {
         let mid = sorted_lengths.len() / 2;
         (sorted_lengths[mid - 1] as f64 + sorted_lengths[mid] as f64) / 2.0
     } else {
@@ -66,7 +66,7 @@ pub fn predict_irregular_cycle(historical_lengths: &[u32]) -> CyclePrediction {
         .collect();
     abs_deviations.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
-    let mad = if abs_deviations.len() % 2 == 0 {
+    let mad = if abs_deviations.len().is_multiple_of(2) {
         let mid = abs_deviations.len() / 2;
         (abs_deviations[mid - 1] + abs_deviations[mid]) / 2.0
     } else {

@@ -2,10 +2,10 @@
 <full-backup-content>
     <exclude domain="sharedpref" path="secure_prefs.xml"/>
     <exclude domain="sharedpref" path="secure_prefs_emergency.xml"/>
-    <!-- Exclude entire database domain so novarytm.db, WAL/SHM/journal, and timestamped novarytm.db.bak_* recovery files are excluded -->
+    <!-- Exclude entire database domain so bloom.db, WAL/SHM/journal, and timestamped bloom.db.bak_* recovery files are excluded -->
     <exclude domain="database" path="."/>
-    <exclude domain="database" path="novarytm.db"/>
-    <exclude domain="database" path="novarytm.db-wal"/>
-    <exclude domain="database" path="novarytm.db-shm"/>
-    <exclude domain="database" path="novarytm.db-journal"/>
+    <exclude domain="database" path="bloom.db"/>
+    <exclude domain="database" path="bloom.db-wal"/>
+    <exclude domain="database" path="bloom.db-shm"/>
+    <exclude domain="database" path="bloom.db-journal"/>
 </full-backup-content>

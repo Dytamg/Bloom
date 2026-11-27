@@ -27,6 +27,6 @@
             </intent-filter>
         </activity>
         
-        <receiver android:name="com.novarytm.notifications.NotificationReceiver" android:exported="false" />
+        <receiver android:name="com.bloom.notifications.NotificationReceiver" android:exported="false" />
     </application>
 </manifest>

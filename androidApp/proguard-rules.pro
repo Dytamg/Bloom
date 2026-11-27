@@ -7,11 +7,11 @@
 # ==============================================================================
 # Rust JNI Bridge
 # ==============================================================================
--keep class com.novarytm.ffi.RustBridge { *; }
--keepclasseswithmembernames,includedescriptorclasses class com.novarytm.ffi.RustBridge {
+-keep class com.bloom.ffi.RustBridge { *; }
+-keepclasseswithmembernames,includedescriptorclasses class com.bloom.ffi.RustBridge {
     native <methods>;
 }
--keep class com.novarytm.ffi.RustBridge$** { *; }
+-keep class com.bloom.ffi.RustBridge$** { *; }
 
 # ==============================================================================
 # Official kotlinx.serialization R8 Full-Mode Rules
@@ -55,10 +55,10 @@
 }
 
 # Explicit application serializable domain models (BirthControlInfo, SyncEntry, SyncModels, GoogleDriveManager models, Tracker models)
--keep class com.novarytm.ui.BirthControlInfo { *; }
--keep class com.novarytm.ui.BirthControlInfo$** { *; }
--keep class com.novarytm.sync.** { *; }
--keep class com.novarytm.tracker.** { *; }
+-keep class com.bloom.ui.BirthControlInfo { *; }
+-keep class com.bloom.ui.BirthControlInfo$** { *; }
+-keep class com.bloom.sync.** { *; }
+-keep class com.bloom.tracker.** { *; }
 
 # ==============================================================================
 # SQLCipher & SQLDelight
@@ -66,7 +66,7 @@
 -keep class net.zetetic.** { *; }
 -dontwarn net.zetetic.**
 -keep class app.cash.sqldelight.** { *; }
--keep class com.novarytm.db.** { *; }
+-keep class com.bloom.db.** { *; }
 
 # ==============================================================================
 # Ktor Client ServiceLoader & Coroutines
@@ -102,6 +102,6 @@
 # ==============================================================================
 # Android BroadcastReceiver & Google Play Services Auth
 # ==============================================================================
--keep class com.novarytm.notifications.NotificationReceiver { *; }
+-keep class com.bloom.notifications.NotificationReceiver { *; }
 -keep class com.google.android.gms.common.** { *; }
 -keep class com.google.android.gms.auth.** { *; }

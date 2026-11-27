@@ -2,7 +2,7 @@
 
 **Effective Date:** October 2026
 
-At Bloom ("we", "us", "our"), your privacy is our highest priority. This Privacy Policy explains how Bloom (the "App", package `com.novarytm.android`) handles your personal information. We built Bloom from the ground up to ensure that your sensitive health data remains exclusively under your control.
+At Bloom ("we", "us", "our"), your privacy is our highest priority. This Privacy Policy explains how Bloom (the "App", package `com.bloom.android`) handles your personal information. We built Bloom from the ground up to ensure that your sensitive health data remains exclusively under your control.
 
 ## 1. Zero Cloud Architecture
 Bloom operates on a **zero cloud** architecture. We do not own, rent, or operate any servers that store, process, or transmit your personal data, health data, or usage data. **Your data is never sent to us, nor is it accessible to us or any third parties.**
